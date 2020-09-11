@@ -10,9 +10,9 @@
 pacman -S mingw-w64-x86_64-gtk3
 ```
 4. Add MSYS2 bin to path
-	a. Press Win+R and type `systempropertiesadvanced`, and press OK.
-	b. Click on "Environment Variables"
-	c. Add mingw64 bin folder to path (Default is `C:\msys64\mingw64\bin`)
+	1. Press Win+R and type `systempropertiesadvanced`, and press OK.
+	2. Click on "Environment Variables"
+	3. Add mingw64 bin folder to path (Default is `C:\msys64\mingw64\bin`)
 
 ## Compiling the project
 1. Install mingw gcc: 
