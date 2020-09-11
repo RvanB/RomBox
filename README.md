@@ -1,3 +1,5 @@
+![Screenshot of RomBox](https://i.imgur.com/lJTKEbj.png)
+
 # Installation
 
 ## Setting up GTK3 with MSYS2

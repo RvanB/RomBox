@@ -106,7 +106,7 @@ int create_window(int *argc, char **argv) {
   GtkWidget *window;
 
   window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  gtk_window_set_title (GTK_WINDOW (window), "Timed Launcher");
+  gtk_window_set_title (GTK_WINDOW (window), "RomBox");
   gtk_window_set_default_size (GTK_WINDOW (window), 224 * scale, 160 * scale);
 
   // Interface
