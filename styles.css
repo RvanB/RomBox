@@ -1,0 +1,15 @@
+label, button {
+	color: white;
+	font-family: "Tetris";
+	font-size: 21px;
+}
+combobox * {
+	color: white;
+	font-family: "Tetris";
+	font-size: 14px;
+	background-color: black;
+}
+
+combobox *:hover {
+	background-color: #E4E594;
+}
