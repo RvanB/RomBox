@@ -21,7 +21,6 @@ static pthread_t id;
 static bool launched = false;
 static int scale = 3;
 static bool window_open = false;
-static guint number = 11;
 static bool loaded = false;
 static int playtime = 0;
 static int nEmulators = 0;
@@ -161,7 +160,9 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
     rewind(emulators);
     emulator_paths = (char **)malloc(sizeof(char *) * (nEmulators + 1));
     for (int i = 0; i < nEmulators + 1; i++) {
-      char buffer[200];
+			emulator_paths[i] = (char *)malloc(200 * sizeof(char));
+      char buffer[200] = {0};
+			
       if (fgets(buffer, 200, emulators) != buffer)
         return 1;
       
@@ -178,7 +179,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
 
       char * path = buffer + r + 1;
-      emulator_paths[i] = (char *)malloc(200 * sizeof(char));
+      
       strcpy(emulator_paths[i], path);
     }
   } else {
@@ -193,9 +194,10 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
     rewind(games);
     game_paths = (char **)malloc(sizeof(char *) * (nGames + 1));
 
-    g_print("nGames + 1 = %d\n", nGames + 1);
     for (int i = 0; i < nGames + 1; i++) {
-      char buffer[200];
+			game_paths[i] = (char *)malloc(200 * sizeof(char));
+      char buffer[200] = {0};
+			
       if (fgets(buffer, 200, games) != buffer)
         return 1;
 
@@ -210,7 +212,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(input_combo), NULL, name);
 
       char * path = buffer + r + 1;
-      game_paths[i] = (char *)malloc(200 * sizeof(char));
+      
       strcpy(game_paths[i], path);
 
       int r1 = r + 1;
@@ -218,8 +220,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
         r1++;
       buffer[r1] = 0;
       char * playtime = buffer + r1 + 1;
-
-      g_print("%s, %s, %s minutes\n", name, path, playtime);
+			
     }
   } else {
     fopen("data/games.txt", "w");
@@ -227,7 +228,25 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
   fclose(games);
 
   loaded = true;
+	
+	if (nEmulators > 0)
+		gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
+  
+	if (nGames > 0)
+		gtk_combo_box_set_active(GTK_COMBO_BOX(input_combo), 0);
+	
   return 0;
+	
+	
+}
+
+void update_combo(GtkWidget *combo, gpointer data) {
+	char * str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
+  
+	GtkWidget *label = (GtkWidget *)data;
+	gtk_label_set_text(GTK_LABEL(label), str);
+	
+	g_free(str);
 }
 
 int create_window(int *argc, char **argv) {
@@ -242,17 +261,21 @@ int create_window(int *argc, char **argv) {
   gtk_window_set_title (GTK_WINDOW (window), "RomBox");
   gtk_window_set_default_size (GTK_WINDOW (window), 224 * scale, 160 * scale);
 
+	
+  GtkWidget *program_name = gtk_label_new(NULL);
+  GtkWidget *input_name = gtk_label_new(NULL);
+
   GtkWidget *program_combo = gtk_combo_box_text_new();
   gtk_widget_set_size_request(program_combo, 88 * scale, 24 * scale);
   gtk_widget_set_opacity(program_combo, 0);
+	g_signal_connect(program_combo, "changed", G_CALLBACK(update_combo), (gpointer)program_name);
 
   GtkWidget *input_combo = gtk_combo_box_text_new();
   gtk_widget_set_size_request(input_combo, 88 * scale, 24 * scale);
   gtk_widget_set_opacity(input_combo, 0);
+	g_signal_connect(input_combo, "changed", G_CALLBACK(update_combo), (gpointer)input_name);
+	
   GError *error = NULL;
-
-  gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
-  gtk_combo_box_set_active(GTK_COMBO_BOX(input_combo), 0);
 
   const gchar *css_relpath = "styles.css";
   GFile *css_file = g_file_new_for_path(css_relpath);
@@ -275,28 +298,33 @@ int create_window(int *argc, char **argv) {
   gtk_widget_set_size_request(button, 112 * scale, 24 * scale);
   gtk_widget_set_opacity(button, 0);
 
+	// Load data from files
+	load_data(program_combo, input_combo);
+
   // Construct args string from program name and input paths
-  /*
-  char args[1024];
-  char * program_name_str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(program_combo));
-  char * input_name_str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(input_combo));
+  char args[1024] = {0};
+	
+  char *program_name_str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(program_combo));
+  char *input_name_str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(input_combo));
+	
+	if (program_name_str != NULL && input_name_str != NULL)
  
+	g_free(program_name_str);
+  g_free(input_name_str);
+ 
+ /*
   strcpy(args, program_name_str);
   strcat(args, " ");
   strcat(args, input_name_str);
 
-  g_free(program_name_str);
-  g_free(input_name_str);
 
-  g_print("Launch args: %s\n", args);
+
+  
   
   */
 
   g_signal_connect (button, "clicked", G_CALLBACK (launch), NULL);
 
-  GtkWidget *program_name = gtk_label_new("NESTOPIA");
-
-  GtkWidget *input_name = gtk_label_new("TETRIS");
 
   GtkWidget *play = gtk_label_new("PLAY");
 
@@ -334,8 +362,6 @@ int create_window(int *argc, char **argv) {
 
   g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(gtk_main_quit), NULL);
   gtk_widget_show_all (window);
-
-  load_data(program_combo, input_combo);
 
   if (error) {
     g_warning("%s", error->message);
