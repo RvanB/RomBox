@@ -9,6 +9,15 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+/* Structures */
+struct widgets {
+	GtkWidget *program_name;
+	GtkWidget *input_name;
+	GtkWidget *program_combo;
+	GtkWidget *input_combo;
+	GtkWidget *play;
+};
+
 /* Prototypes */
 
 int load_data(GtkWidget *program_combo, GtkWidget *input_combo);
@@ -44,7 +53,7 @@ void toggle_open(GtkWidget *widget, gpointer data) {
 }
 
 void * thread_body(void *arg) {
-    char * arg_str = (char *)arg;
+		char * args = (char *)arg;
     launched = true;
     STARTUPINFO si;
     PROCESS_INFORMATION pi;
@@ -54,7 +63,7 @@ void * thread_body(void *arg) {
     ZeroMemory(&pi, sizeof(pi));
 
     // Start the child process.
-    if(!CreateProcess(NULL, arg_str, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+    if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
       fprintf(stderr, "Couldn't create process");
     }
     // Wait until child process exits.
@@ -121,13 +130,37 @@ void delete_item(GtkWidget *widget, gpointer data) {
 }
 
 void launch (GtkWidget *widget, gpointer data) {
-  
-   int err = pthread_create(&id, NULL, thread_body, (void *)data);
+		
+	struct widgets * widgets = (struct widgets *)data;	
+		
+	// Construct args string from program name and input paths
 
-  if (err) {
-    fprintf(stderr, "Can't create thread with id %ld\n", id);
-    exit(1);
-  }
+	char *launch_args = (char *)malloc(sizeof(char) * 1024);
+	int program_index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->program_combo));
+	int input_index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->input_combo));
+
+	if (program_index > -1 && input_index > -1) {
+		
+		char * program_str = emulator_paths[program_index + 1];
+		char * input_str = game_paths[input_index + 1];
+		
+		g_print("%s %s\n", program_str, input_str);
+		strcpy(launch_args, program_str);
+		strcat(launch_args, " ");
+		strcat(launch_args, input_str);
+		
+		int err = pthread_create(&id, NULL, thread_body, (void *)launch_args);
+		
+		if (err) {
+			fprintf(stderr, "Can't create thread with id %ld\n", id);
+			exit(1);
+		}
+	} else {
+		g_print("No program or emulator selected\n");
+	}
+		
+	free(launch_args);
+
 }
 
 int count_lines(FILE* open_file) {
@@ -179,6 +212,10 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
 
       char * path = buffer + r + 1;
+			
+			int path_length = strlen(path);
+			if (path[path_length - 1] == '\n')
+				path[path_length - 1] = 0;
       
       strcpy(emulator_paths[i], path);
     }
@@ -212,6 +249,10 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(input_combo), NULL, name);
 
       char * path = buffer + r + 1;
+			
+			int path_length = strlen(path);
+			if (path[path_length - 1] == '\n')
+				path[path_length - 1] = 0;
       
       strcpy(game_paths[i], path);
 
@@ -241,16 +282,21 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
 }
 
 void update_combo(GtkWidget *combo, gpointer data) {
+	struct widgets * widgets = (struct widgets *)data;
 	char * str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
   
-	GtkWidget *label = (GtkWidget *)data;
+	GtkWidget *label;
+	if (combo == widgets->program_combo)
+		label = widgets->program_name;
+	else
+		label = widgets->input_name;
+	
 	gtk_label_set_text(GTK_LABEL(label), str);
 	
 	g_free(str);
 }
 
-int create_window(int *argc, char **argv) {
-	gtk_init (argc, &argv);
+int create_window(struct widgets *widgets) {
 		
 	int status;
 	
@@ -260,20 +306,27 @@ int create_window(int *argc, char **argv) {
   window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_title (GTK_WINDOW (window), "RomBox");
   gtk_window_set_default_size (GTK_WINDOW (window), 224 * scale, 160 * scale);
-
 	
   GtkWidget *program_name = gtk_label_new(NULL);
   GtkWidget *input_name = gtk_label_new(NULL);
+	
+	widgets->program_name = program_name;
+	widgets->input_name = input_name;
 
   GtkWidget *program_combo = gtk_combo_box_text_new();
   gtk_widget_set_size_request(program_combo, 88 * scale, 24 * scale);
   gtk_widget_set_opacity(program_combo, 0);
-	g_signal_connect(program_combo, "changed", G_CALLBACK(update_combo), (gpointer)program_name);
+	
+	widgets->program_combo = program_combo;
 
   GtkWidget *input_combo = gtk_combo_box_text_new();
   gtk_widget_set_size_request(input_combo, 88 * scale, 24 * scale);
   gtk_widget_set_opacity(input_combo, 0);
-	g_signal_connect(input_combo, "changed", G_CALLBACK(update_combo), (gpointer)input_name);
+	
+	widgets->input_combo = input_combo;
+	
+	g_signal_connect(program_combo, "changed", G_CALLBACK(update_combo), (gpointer)widgets);
+	g_signal_connect(input_combo, "changed", G_CALLBACK(update_combo), (gpointer)widgets);
 	
   GError *error = NULL;
 
@@ -283,7 +336,6 @@ int create_window(int *argc, char **argv) {
   GtkCssProvider *cssProvider = gtk_css_provider_new();
   gtk_css_provider_load_from_file(cssProvider, css_file, &error);
   gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
-
 
   g_object_unref(css_file);
 
@@ -300,31 +352,8 @@ int create_window(int *argc, char **argv) {
 
 	// Load data from files
 	load_data(program_combo, input_combo);
-
-  // Construct args string from program name and input paths
-  char args[1024] = {0};
-	
-  char *program_name_str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(program_combo));
-  char *input_name_str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(input_combo));
-	
-	if (program_name_str != NULL && input_name_str != NULL)
  
-	g_free(program_name_str);
-  g_free(input_name_str);
- 
- /*
-  strcpy(args, program_name_str);
-  strcat(args, " ");
-  strcat(args, input_name_str);
-
-
-
-  
-  
-  */
-
-  g_signal_connect (button, "clicked", G_CALLBACK (launch), NULL);
-
+  g_signal_connect (button, "clicked", G_CALLBACK (launch), (gpointer)widgets);
 
   GtkWidget *play = gtk_label_new("PLAY");
 
@@ -370,11 +399,14 @@ int create_window(int *argc, char **argv) {
 }
 
 int main(int argc, char** argv) {
-
+	
   time_t start, end;
   int elapsed;
+	
+	struct widgets * widgets = (struct widgets *)malloc(sizeof(struct widgets));
 
-  int status = create_window(&argc, argv);
+	gtk_init (&argc, &argv);
+  int status = create_window(widgets);
   gtk_main();
 
   if (launched)
@@ -394,7 +426,7 @@ int main(int argc, char** argv) {
 
   fclose(out);
   */
+	free(widgets);
   free_paths();
-  
   return status;
 }
