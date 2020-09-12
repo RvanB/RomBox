@@ -140,7 +140,7 @@ int count_lines(FILE* open_file) {
       if (c == '\n')
         lines++;
     }
-    return lines;
+    return lines + 1;
 }
 
 int refresh_data(GtkWidget *program_combo, GtkWidget *input_combo) {
@@ -192,7 +192,9 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
     nGames = count_lines(games) - 1;
     rewind(games);
     game_paths = (char **)malloc(sizeof(char *) * (nGames + 1));
-    for (int i = 0; i < (nGames + 1); i++) {
+
+    g_print("nGames + 1 = %d\n", nGames + 1);
+    for (int i = 0; i < nGames + 1; i++) {
       char buffer[200];
       if (fgets(buffer, 200, games) != buffer)
         return 1;
