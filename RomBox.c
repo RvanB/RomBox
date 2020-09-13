@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <math.h>
+#include <signal.h>
 
 /* Structures */
 struct widgets {
@@ -39,6 +40,7 @@ static bool loaded = false;
 static int nEmulators = 0;
 static int nGames = 0;
 static bool playing = false;
+static pthread_cond_t increment_time = PTHREAD_COND_INITIALIZER;
 
 void free_paths() {
   for (int i = 0; i < nEmulators + 1; i++) {
@@ -56,6 +58,58 @@ void toggle_open(GtkWidget *widget, gpointer data) {
   window_open = !window_open;
 }
 
+void update_file_playtime(struct widgets * widgets, int game_index, int minutes) {
+
+  FILE* games;
+  if (games = fopen("data/roms.txt", "rb+")) {
+    
+    int line_counter = 0;
+    char buffer[200] = {0};
+    while (line_counter < game_index + 1) {
+      fgets(buffer, 200, games);
+      line_counter++;
+    }
+    
+    char c;
+    for (int i = 0; i < 3; i++) {
+      while (c != '\t')
+        c = fgetc(games);
+      c = fgetc(games);
+    }
+    int playtime_location = ftell(games) - 1;
+    
+    int digits;
+    if (minutes == 0)
+      digits = 1;
+    else
+      digits = 1 + (int)(log10((double)minutes));
+    char new_minutes[digits + 1];
+    snprintf(new_minutes, digits + 2, "%d\n", minutes);
+    
+    fseek(games, playtime_location, SEEK_SET);
+    if (playing)
+      fwrite(new_minutes, sizeof(char), digits + 1, games);
+    fclose(games);
+  }
+}
+
+int custom_wait(int seconds) {
+  pthread_mutex_t fakeMutex = PTHREAD_MUTEX_INITIALIZER;
+  
+  struct timespec timeToWait;
+  struct timeval now;
+  int rt;
+  
+  mingw_gettimeofday(&now, NULL);
+  
+  timeToWait.tv_sec = now.tv_sec + seconds;
+  
+  pthread_mutex_lock(&fakeMutex);
+  rt = pthread_cond_timedwait(&increment_time, &fakeMutex, &timeToWait);
+  pthread_mutex_unlock(&fakeMutex);
+  return rt;
+}
+
 void * timer_body(void *arg) {
   
   struct widgets * widgets = (struct widgets *)arg;
@@ -64,62 +118,44 @@ void * timer_body(void *arg) {
   
   int loaded_minutes = playtimes[game_index + 1];
   
-  char *time = display_time(loaded_minutes);
-  gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
-  free(time);
+  char *time_str = display_time(loaded_minutes);
+  gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
+  free(time_str);
   
   int minutes = loaded_minutes;
-
-      
+  time_t start, end;
+  time(&start);
+  
   while (playing) {
-    sleep(1);
-    minutes++;
     
-    time = display_time(minutes);
+    custom_wait(60);
     
     if (playing) {
-      gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
-    
+      minutes++;
+      
+      time_str = display_time(minutes);
+      
+      gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
+
       playtimes[game_index + 1] = minutes;
+        
+      free(time_str);
       
-      FILE* games;
-      if (games = fopen("data/roms.txt", "rb+")) {
-        
-        int line_counter = 0;
-        char buffer[200] = {0};
-        while (line_counter < game_index + 1) {
-          fgets(buffer, 200, games);
-          line_counter++;
-        }
-        
-        char c;
-        for (int i = 0; i < 3; i++) {
-          while (c != '\t')
-            c = fgetc(games);
-          c = fgetc(games);
-        }
-        int playtime_location = ftell(games) - 1;
-        
-        int digits;
-        if (minutes == 0)
-          digits = 1;
-        else
-          digits = 1 + (int)(log10((double)minutes));
-        char new_minutes[digits + 1];
-        snprintf(new_minutes, digits + 1, "%d\n", minutes);
-        
-        fseek(games, playtime_location, SEEK_SET);
-        if (playing)
-          fwrite(new_minutes, sizeof(char), digits + 1, games);
-        fclose(games);
-      }
+      update_file_playtime(widgets, game_index, minutes);
     }
-      
-    free(time);
     
   }
+  
+  time(&end);
+  int elapsed = difftime(end, start) / 60;
+  update_file_playtime(widgets, game_index, loaded_minutes + elapsed);
   pthread_exit(NULL);
   
+}
+
+void quit() {
+  pthread_cond_signal(&increment_time);
+  gtk_main_quit();
 }
 
 void * thread_body(void *arg) {
@@ -516,7 +552,7 @@ int create_window(struct widgets *widgets) {
   gtk_layout_put(GTK_LAYOUT(layout), remove_game, 208 * scale, 24 * scale);
   gtk_layout_put(GTK_LAYOUT(layout), playtime, 80 * scale, 112 * scale);
 
-  g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(gtk_main_quit), NULL);
+  g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(quit), NULL);
   gtk_widget_show_all (window);
 
   if (error) {
@@ -538,21 +574,7 @@ int main(int argc, char** argv) {
 
   if (launched)
     pthread_join(id, NULL);
-
-  /*
-  time(&end);
-  elapsed = difftime(end, start) / 60;
-
-  int minutes = 0;
-  FILE *out = fopen(output, "r");
-  fscanf (out, "%d", &minutes);
-  minutes += elapsed;
-
-  freopen(output, "w", out);
-  fprintf(out, "%d", minutes);
-
-  fclose(out);
-  */
+  
   free(widgets);
   free(playtimes);
   free_paths();
