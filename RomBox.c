@@ -8,6 +8,8 @@
 #include <gtk/gtk.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <math.h>
 
 /* Structures */
 struct widgets {
@@ -15,25 +17,28 @@ struct widgets {
 	GtkWidget *input_name;
 	GtkWidget *program_combo;
 	GtkWidget *input_combo;
-	GtkWidget *play;
+	GtkWidget *playtime;
 };
 
 /* Prototypes */
 
 int load_data(GtkWidget *program_combo, GtkWidget *input_combo);
+char * display_time(int minutes);
 
 /* Global variables */
 
 static char ** emulator_paths;
 static char ** game_paths;
+static int * playtimes;
 static pthread_t id;
+static pthread_t timer_id;
 static bool launched = false;
 static int scale = 3;
 static bool window_open = false;
 static bool loaded = false;
-static int playtime = 0;
 static int nEmulators = 0;
 static int nGames = 0;
+static bool playing = false;
 
 void free_paths() {
   for (int i = 0; i < nEmulators + 1; i++) {
@@ -45,36 +50,110 @@ void free_paths() {
 
   free(emulator_paths);
   free(game_paths);
-
 }
 
 void toggle_open(GtkWidget *widget, gpointer data) {
 	window_open = !window_open;
 }
 
-void * thread_body(void *arg) {
-		char * args = (char *)arg;
-    launched = true;
-    STARTUPINFO si;
-    PROCESS_INFORMATION pi;
+void * timer_body(void *arg) {
+	
+	struct widgets * widgets = (struct widgets *)arg;
+	
+	int game_index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->input_combo));
+	
+	int loaded_minutes = playtimes[game_index + 1];
+	
+	char *time = display_time(loaded_minutes);
+	gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
+	free(time);
+	
+	int minutes = loaded_minutes;
 
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
-
-    // Start the child process.
-    if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-      fprintf(stderr, "Couldn't create process");
-    }
-    // Wait until child process exits.
-    WaitForSingleObject( pi.hProcess, INFINITE );
-
-    // Close process and thread handles.
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-
-    pthread_exit(NULL);
+			
+	while (playing) {
+		sleep(1);
+		minutes++;
+		
+		time = display_time(minutes);
+		
+		if (playing) {
+			gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
+		
+			playtimes[game_index + 1] = minutes;
+			
+			FILE* games;
+			if (games = fopen("data/roms.txt", "rb+")) {
+				
+				int line_counter = 0;
+				char buffer[200] = {0};
+				while (line_counter < game_index + 1) {
+					fgets(buffer, 200, games);
+					line_counter++;
+				}
+				
+				char c;
+				for (int i = 0; i < 3; i++) {
+					while (c != '\t')
+						c = fgetc(games);
+					c = fgetc(games);
+				}
+				int playtime_location = ftell(games) - 1;
+				
+				int digits;
+				if (minutes == 0)
+					digits = 1;
+				else
+					digits = 1 + (int)(log10((double)minutes));
+				char new_minutes[digits + 1];
+				snprintf(new_minutes, digits + 1, "%d\n", minutes);
+				
+				fseek(games, playtime_location, SEEK_SET);
+				if (playing)
+					fwrite(new_minutes, sizeof(char), digits + 1, games);
+				fclose(games);
+			}
+		}
+			
+		free(time);
+		
+	}
+	pthread_exit(NULL);
+	
 }
+
+void * thread_body(void *arg) {
+	char * args = (char *)arg;
+	launched = true;
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
+
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+	ZeroMemory(&pi, sizeof(pi));
+
+	playing = true;
+	
+	// Start the child process.
+	if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+		fprintf(stderr, "Couldn't create process");
+	}
+	
+	// Wait until child process exits.
+	WaitForSingleObject( pi.hProcess, INFINITE );
+
+	playing = false;
+	
+	pthread_join(timer_id, NULL);
+	
+	// Close process and thread handles.
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+
+	pthread_exit(NULL);
+}
+
+
 
 char * select_file(GtkWindow *parent) {
   GtkFileChooserNative *native = gtk_file_chooser_native_new("Select emulator executable", parent, GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
@@ -142,9 +221,9 @@ void launch (GtkWidget *widget, gpointer data) {
 	if (program_index > -1 && input_index > -1) {
 		
 		char * program_str = emulator_paths[program_index + 1];
-		char * input_str = game_paths[input_index + 1];
 		
-		g_print("%s %s\n", program_str, input_str);
+		char * input_str = game_paths[input_index + 1];
+
 		strcpy(launch_args, program_str);
 		strcat(launch_args, " ");
 		strcat(launch_args, input_str);
@@ -155,6 +234,14 @@ void launch (GtkWidget *widget, gpointer data) {
 			fprintf(stderr, "Can't create thread with id %ld\n", id);
 			exit(1);
 		}
+		
+		err = pthread_create(&timer_id, NULL, timer_body, (void *)widgets);
+			
+		if (err) {
+			fprintf(stderr, "Can't create thread with id %ld\n", timer_id);
+			exit(1);
+		}
+		
 	} else {
 		g_print("No program or emulator selected\n");
 	}
@@ -191,6 +278,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
   if (emulators = fopen("data/emulators.txt", "r")) {
     nEmulators = count_lines(emulators) - 1;
     rewind(emulators);
+		int nDisabled = 0;
     emulator_paths = (char **)malloc(sizeof(char *) * (nEmulators + 1));
     for (int i = 0; i < nEmulators + 1; i++) {
 			emulator_paths[i] = (char *)malloc(200 * sizeof(char));
@@ -200,8 +288,13 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
         return 1;
       
       // Skip line if it's the header row or if item is hidden
-      if (i == 0 || buffer[0] == 'N')
+      if (i == 0)
         continue;
+			
+			if (buffer[0] == 'N') {
+				nDisabled++;
+				continue;
+			}
 
       int r = 2;
       while (buffer[r] != '\t')
@@ -217,20 +310,23 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
 			if (path[path_length - 1] == '\n')
 				path[path_length - 1] = 0;
       
-      strcpy(emulator_paths[i], path);
+      strcpy(emulator_paths[i - nDisabled], path);
+			
     }
+		fclose(emulators);
   } else {
     fopen("data/emulators.txt", "w");
   }
-  fclose(emulators);
+  
 
   // Load games and playtime
   FILE *games;
   if (games = fopen("data/roms.txt", "r")) {
     nGames = count_lines(games) - 1;
     rewind(games);
+		int nDisabled = 0;
     game_paths = (char **)malloc(sizeof(char *) * (nGames + 1));
-
+		playtimes = (int *)malloc(sizeof(int) * (nGames + 1));
     for (int i = 0; i < nGames + 1; i++) {
 			game_paths[i] = (char *)malloc(200 * sizeof(char));
       char buffer[200] = {0};
@@ -238,8 +334,13 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       if (fgets(buffer, 200, games) != buffer)
         return 1;
 
-      if (i == 0 || buffer[0] == 'N')
+      if (i == 0)
         continue;
+			
+			if (buffer[0] == 'N') {
+				nDisabled++;
+				continue;
+			}
 
       int r = 2;
       while (buffer[r] != '\t')
@@ -254,44 +355,59 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
 			if (path[path_length - 1] == '\n')
 				path[path_length - 1] = 0;
       
-      strcpy(game_paths[i], path);
+      strcpy(game_paths[i - nDisabled], path);
 
       int r1 = r + 1;
       while (buffer[r1] != '\t')
         r1++;
       buffer[r1] = 0;
       char * playtime = buffer + r1 + 1;
+			playtimes[i - nDisabled] = atoi(playtime);
 			
     }
+		fclose(games);
   } else {
     fopen("data/games.txt", "w");
   }
-  fclose(games);
-
   loaded = true;
 	
-	if (nEmulators > 0)
-		gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
-  
-	if (nGames > 0)
-		gtk_combo_box_set_active(GTK_COMBO_BOX(input_combo), 0);
-	
   return 0;
-	
-	
+}
+
+char * display_time(int minutes) {
+	int hours = minutes / 60;
+	int days = hours / 24;
+	hours -= days * 24;
+	minutes = minutes - days * 24 * 60 - hours * 60;
+	char * output = (char *)malloc(sizeof(char) * 9);
+	snprintf(output, 9, "%0*d:%0*d:%0*d", 2, days, 2, hours, 2, minutes);
+	return output;
 }
 
 void update_combo(GtkWidget *combo, gpointer data) {
 	struct widgets * widgets = (struct widgets *)data;
+	
 	char * str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
   
 	GtkWidget *label;
-	if (combo == widgets->program_combo)
+	if (combo == widgets->program_combo) {
 		label = widgets->program_name;
-	else
+	} else {
 		label = widgets->input_name;
-	
+		int i = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
+		
+		char *time;
+		if (str == NULL)
+			 time = display_time(0);
+		else 
+			 time = display_time(playtimes[i + 1]);
+		gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
+		free(time);
+		
+	}
 	gtk_label_set_text(GTK_LABEL(label), str);
+	
+	
 	
 	g_free(str);
 }
@@ -306,6 +422,10 @@ int create_window(struct widgets *widgets) {
   window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_title (GTK_WINDOW (window), "RomBox");
   gtk_window_set_default_size (GTK_WINDOW (window), 224 * scale, 160 * scale);
+	
+	GtkWidget *playtime = gtk_label_new(NULL);
+	
+	widgets->playtime = playtime;
 	
   GtkWidget *program_name = gtk_label_new(NULL);
   GtkWidget *input_name = gtk_label_new(NULL);
@@ -352,6 +472,12 @@ int create_window(struct widgets *widgets) {
 
 	// Load data from files
 	load_data(program_combo, input_combo);
+	
+	if (nEmulators > 0)
+		gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
+  
+	if (nGames > 0)
+		gtk_combo_box_set_active(GTK_COMBO_BOX(input_combo), 0);
  
   g_signal_connect (button, "clicked", G_CALLBACK (launch), (gpointer)widgets);
 
@@ -388,6 +514,7 @@ int create_window(struct widgets *widgets) {
   gtk_layout_put(GTK_LAYOUT(layout), remove_emulator, 104 * scale, 24 * scale);
   gtk_layout_put(GTK_LAYOUT(layout), add_game, 208 * scale, 8 * scale);
   gtk_layout_put(GTK_LAYOUT(layout), remove_game, 208 * scale, 24 * scale);
+	gtk_layout_put(GTK_LAYOUT(layout), playtime, 80 * scale, 112 * scale);
 
   g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(gtk_main_quit), NULL);
   gtk_widget_show_all (window);
@@ -427,6 +554,7 @@ int main(int argc, char** argv) {
   fclose(out);
   */
 	free(widgets);
+	free(playtimes);
   free_paths();
   return status;
 }
