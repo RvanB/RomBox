@@ -1,4 +1,4 @@
-![Screenshot of RomBox](https://i.imgur.com/lJTKEbj.png)
+![Screenshot of RomBox](https://i.imgur.com/PgE5ly4.png)
 
 # Installation
 
