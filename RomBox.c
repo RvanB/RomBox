@@ -78,17 +78,43 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
     }
     int playtime_location = ftell(games) - 1;
     
+    while (c != '\n' && c != EOF)
+      c = fgetc(games);
+    c = fgetc(games);
+    int read_start = ftell(games) - 1;
+    
     int digits;
     if (minutes == 0)
       digits = 1;
     else
       digits = 1 + (int)(log10((double)minutes));
-    char new_minutes[digits + 1];
+    char new_minutes[digits + 2];
     snprintf(new_minutes, digits + 2, "%d\n", minutes);
     
-    fseek(games, playtime_location, SEEK_SET);
-    if (playing)
-      fwrite(new_minutes, sizeof(char), digits + 1, games);
+    if (game_index < nGames - 1) {
+      fseek(games, 0, SEEK_END);
+      long size = ftell(games) - read_start;
+      fseek(games, read_start, SEEK_SET);
+      
+      char *temp = (char *)malloc(size + 1);
+      fread(temp, 1, size, games);
+      
+      temp[size] = 0;
+      
+      fseek(games, playtime_location, SEEK_SET);
+      if (playing) {
+        fwrite(new_minutes, sizeof(char), digits + 1, games);
+        fwrite(temp, 1, size, games);
+      }
+      free(temp);
+    } else {
+      fseek(games, playtime_location, SEEK_SET);
+      if (playing) {
+        fwrite(new_minutes, sizeof(char), digits + 1, games);
+      }
+    }
+    
+    
     fclose(games);
   }
 }
