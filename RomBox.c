@@ -72,7 +72,7 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
     
     char c;
     for (int i = 0; i < 3; i++) {
-      while (c != '\t')
+      while (c != ',')
         c = fgetc(games);
       c = fgetc(games);
     }
@@ -338,12 +338,20 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
   // Load emulators
   FILE *emulators;
   if (emulators = fopen("data/emulators.txt", "r")) {
+    g_print("opened data/emulators.txt\n");
     nEmulators = count_lines(emulators) - 1;
     rewind(emulators);
     int nDisabled = 0;
-    emulator_paths = (char **)malloc(sizeof(char *) * (nEmulators + 1));
+    if ((emulator_paths = (char **)malloc(sizeof(char *) * (nEmulators + 1))) == NULL) {
+      perror("malloc");
+      exit(0);
+    }
     for (int i = 0; i < nEmulators + 1; i++) {
-      emulator_paths[i] = (char *)malloc(200 * sizeof(char));
+      if ((emulator_paths[i] = (char *)malloc(200 * sizeof(char))) == NULL) {
+        perror("malloc");
+        exit(0);
+      }
+      
       char buffer[200] = {0};
       
       if (fgets(buffer, 200, emulators) != buffer)
@@ -359,7 +367,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       }
 
       int r = 2;
-      while (buffer[r] != '\t')
+      while (buffer[r] != ',')
         r++;
       buffer[r] = 0;
       char * name = buffer + 2;
@@ -376,21 +384,35 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       
     }
     fclose(emulators);
-  } else {
-    fopen("data/emulators.txt", "w");
+  } 
+  else {
+    emulators = fopen("data/emulators.txt", "w");
+    fclose(emulators);
   }
   
+  
+  g_print("I'm here.");
 
   // Load games and playtime
   FILE *games;
   if (games = fopen("data/roms.txt", "r")) {
+    g_print("opened data/roms.txt\n");
     nGames = count_lines(games) - 1;
     rewind(games);
     int nDisabled = 0;
-    game_paths = (char **)malloc(sizeof(char *) * (nGames + 1));
-    playtimes = (int *)malloc(sizeof(int) * (nGames + 1));
+    if ((game_paths = (char **)malloc(sizeof(char *) * (nGames + 1))) == NULL) {
+      perror("malloc");
+      exit(0);
+    }
+    if ((playtimes = (int *)malloc(sizeof(int) * (nGames + 1))) == NULL) {
+      perror("malloc");
+      exit(0);
+    }
     for (int i = 0; i < nGames + 1; i++) {
-      game_paths[i] = (char *)malloc(200 * sizeof(char));
+      if ((game_paths[i] = (char *)malloc(200 * sizeof(char))) == NULL) {
+        perror("malloc");
+        exit(0);
+      }
       char buffer[200] = {0};
       
       if (fgets(buffer, 200, games) != buffer)
@@ -405,7 +427,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       }
 
       int r = 2;
-      while (buffer[r] != '\t')
+      while (buffer[r] != ',')
         r++;
       buffer[r] = 0;
       char * name = buffer + 2;
@@ -420,7 +442,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       strcpy(game_paths[i - nDisabled], path);
 
       int r1 = r + 1;
-      while (buffer[r1] != '\t')
+      while (buffer[r1] != ',')
         r1++;
       buffer[r1] = 0;
       char * playtime = buffer + r1 + 1;
@@ -429,8 +451,10 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
     }
     fclose(games);
   } else {
-    fopen("data/games.txt", "w");
+    games = fopen("data/roms.txt", "w");
+    fclose(games);
   }
+  
   loaded = true;
   
   return 0;
@@ -442,6 +466,10 @@ char * display_time(int minutes) {
   hours -= days * 24;
   minutes = minutes - days * 24 * 60 - hours * 60;
   char * output = (char *)malloc(sizeof(char) * 9);
+  if (output == NULL) {
+    perror("malloc");
+    exit(0);
+  }
   snprintf(output, 9, "%0*d:%0*d:%0*d", 2, days, 2, hours, 2, minutes);
   return output;
 }
@@ -593,6 +621,10 @@ int main(int argc, char** argv) {
   int elapsed;
   
   struct widgets * widgets = (struct widgets *)malloc(sizeof(struct widgets));
+  if (widgets == NULL) {
+    perror("malloc");
+    exit(0);
+  }
 
   gtk_init (&argc, &argv);
   int status = create_window(widgets);
