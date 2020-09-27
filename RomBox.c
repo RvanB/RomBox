@@ -72,7 +72,7 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
     
     char c;
     for (int i = 0; i < 3; i++) {
-      while (c != ',')
+      while (c != ',' && c != EOF)
         c = fgetc(games);
       c = fgetc(games);
     }
@@ -81,15 +81,15 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
     while (c != '\n' && c != EOF)
       c = fgetc(games);
     c = fgetc(games);
-    int read_start = ftell(games) - 1;
+    int read_start = ftell(games) - 2; // subtract 2 because \r\n on windows
     
     int digits;
     if (minutes == 0)
       digits = 1;
     else
       digits = 1 + (int)(log10((double)minutes));
-    char new_minutes[digits + 2];
-    snprintf(new_minutes, digits + 2, "%d\n", minutes);
+    char new_minutes[digits];
+    snprintf(new_minutes, digits, "%d", minutes);
     
     if (game_index < nGames - 1) {
       fseek(games, 0, SEEK_END);
@@ -100,17 +100,19 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
       fread(temp, 1, size, games);
       
       temp[size] = 0;
+
+      g_print("A%sBB%sA\n", temp, new_minutes);
       
       fseek(games, playtime_location, SEEK_SET);
       if (playing) {
-        fwrite(new_minutes, sizeof(char), digits + 1, games);
+        fwrite(new_minutes, sizeof(char), digits, games);
         fwrite(temp, 1, size, games);
       }
       free(temp);
     } else {
       fseek(games, playtime_location, SEEK_SET);
       if (playing) {
-        fwrite(new_minutes, sizeof(char), digits + 1, games);
+        fwrite(new_minutes, sizeof(char), digits, games);
       }
     }
     
@@ -356,6 +358,8 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       
       if (fgets(buffer, 200, emulators) != buffer)
         return 1;
+
+      g_print(buffer);
       
       // Skip line if it's the header row or if item is hidden
       if (i == 0)
@@ -367,8 +371,11 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       }
 
       int r = 2;
-      while (buffer[r] != ',')
+      while (buffer[r] != ',' && r < 200) {
+        g_print("%c, %d\n", buffer[r], r);
         r++;
+      }
+      g_print("%d\n", r);
       buffer[r] = 0;
       char * name = buffer + 2;
 
@@ -427,7 +434,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       }
 
       int r = 2;
-      while (buffer[r] != ',')
+      while (buffer[r] != ',' && r < 200)
         r++;
       buffer[r] = 0;
       char * name = buffer + 2;
@@ -442,7 +449,7 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       strcpy(game_paths[i - nDisabled], path);
 
       int r1 = r + 1;
-      while (buffer[r1] != ',')
+      while (buffer[r1] != ',' && r < 200)
         r1++;
       buffer[r1] = 0;
       char * playtime = buffer + r1 + 1;
