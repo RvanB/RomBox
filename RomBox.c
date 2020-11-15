@@ -89,7 +89,7 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
     else
       digits = 1 + (int)(log10((double)minutes));
     char new_minutes[digits];
-    snprintf(new_minutes, digits, "%d", minutes);
+    snprintf(new_minutes, digits + 1, "%d", minutes);
     
     if (game_index < nGames - 1) {
       fseek(games, 0, SEEK_END);
@@ -100,8 +100,6 @@ void update_file_playtime(struct widgets * widgets, int game_index, int minutes)
       fread(temp, 1, size, games);
       
       temp[size] = 0;
-
-      g_print("A%sBB%sA\n", temp, new_minutes);
       
       fseek(games, playtime_location, SEEK_SET);
       if (playing) {
@@ -340,7 +338,6 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
   // Load emulators
   FILE *emulators;
   if (emulators = fopen("data/emulators.txt", "r")) {
-    g_print("opened data/emulators.txt\n");
     nEmulators = count_lines(emulators) - 1;
     rewind(emulators);
     int nDisabled = 0;
@@ -358,8 +355,6 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       
       if (fgets(buffer, 200, emulators) != buffer)
         return 1;
-
-      g_print(buffer);
       
       // Skip line if it's the header row or if item is hidden
       if (i == 0)
@@ -372,10 +367,8 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
 
       int r = 2;
       while (buffer[r] != ',' && r < 200) {
-        g_print("%c, %d\n", buffer[r], r);
         r++;
       }
-      g_print("%d\n", r);
       buffer[r] = 0;
       char * name = buffer + 2;
 
@@ -398,12 +391,9 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
   }
   
   
-  g_print("I'm here.");
-
   // Load games and playtime
   FILE *games;
   if (games = fopen("data/roms.txt", "r")) {
-    g_print("opened data/roms.txt\n");
     nGames = count_lines(games) - 1;
     rewind(games);
     int nDisabled = 0;
@@ -440,19 +430,23 @@ int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
       char * name = buffer + 2;
       gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(input_combo), NULL, name);
 
-      char * path = buffer + r + 1;
-      
-      int path_length = strlen(path);
-      if (path[path_length - 1] == '\n')
-        path[path_length - 1] = 0;
-      
-      strcpy(game_paths[i - nDisabled], path);
-
       int r1 = r + 1;
       while (buffer[r1] != ',' && r < 200)
         r1++;
       buffer[r1] = 0;
+
+      char * path = buffer + r + 1;
+      
+      //if (path[path_length - 1] == '\n')
+      //  path[path_length - 1] = 0;
+      
+      strcpy(game_paths[i - nDisabled], path);
+
       char * playtime = buffer + r1 + 1;
+      int playtime_length = strlen(playtime);
+      if (playtime[playtime_length - 1] == '\n')
+        playtime[playtime_length - 1] = 0;
+
       playtimes[i - nDisabled] = atoi(playtime);
       
     }
