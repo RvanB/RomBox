@@ -28,7 +28,7 @@ You have two options, compiling the project yourself from sources, or downloadin
 	```
 3. Compile sources:
 	```
-  gcc -mwindows \`pkg-config --cflags gtk+-3.0\` -o RomBox.exe RomBox.c resources/icon.res \`pkg-config --libs gtk+-3.0\`
+  	gcc -mwindows \`pkg-config --cflags gtk+-3.0\` -o RomBox.exe RomBox.c resources/icon.res \`pkg-config --libs gtk+-3.0\`
 	```
 ### Releases
 No binary releases have been posted, but the first version will be posted when all functionality is completed.
