@@ -1,0 +1,38 @@
+{
+	"scale":	2,
+	"systems":	[{
+			"name":	"NES",
+			"roms":	[{
+					"name":	"TETRIS",
+					"path":	"C:/Users/rvan/Desktop/Tetris.nes",
+					"playtime":	182
+				}, {
+					"name":	"TETRIS GYM",
+					"path":	"C:/Users/rvan/Desktop/tetrisgym_v4 (patched).nes",
+					"playtime":	82
+				}]
+		}, {
+			"name":	"Gameboy Advance",
+			"roms":	[{
+					"name":	"TETRIS",
+					"path":	"C:/Users/rvan/Desktop/Tetris (World) (Rev A).gb",
+					"playtime":	32
+				}]
+		}],
+	"emulators":	[{
+			"name":	"NESTOPIA",
+			"system":	0,
+			"path":	"C:/Users/rvan/Desktop/Nestopia140bin/nestopia.exe",
+			"flags":	""
+		}, {
+			"name":	"MESEN",
+			"system":	0,
+			"path":	"F:/Mesen.0.9.9/Mesen.exe",
+			"flags":	""
+		}, {
+			"name":	"VIRTUAL BOY ADVANCE",
+			"system":	1,
+			"path":	"C:/Users/rvan/Desktop/VisualBoyAdvance.exe",
+			"flags":	""
+		}]
+}

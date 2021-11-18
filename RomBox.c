@@ -6,636 +6,658 @@
 #include <stdio.h>
 #include <time.h>
 #include <gtk/gtk.h>
+#include <gdk-pixbuf/gdk-pixbuf.h>
+#include <pango/pango.h>
+#include <glib.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <math.h>
 #include <signal.h>
-
-/* Structures */
-struct widgets {
-  GtkWidget *program_name;
-  GtkWidget *input_name;
-  GtkWidget *program_combo;
-  GtkWidget *input_combo;
-  GtkWidget *playtime;
-};
+#include "cJSON.h"
 
 /* Prototypes */
-
-int load_data(GtkWidget *program_combo, GtkWidget *input_combo);
+int load_data();
 char * display_time(int minutes);
 
 /* Global variables */
-
-static char ** emulator_paths;
-static char ** game_paths;
-static int * playtimes;
 static pthread_t id;
 static pthread_t timer_id;
-static bool launched = false;
-static int scale = 3;
-static bool window_open = false;
-static bool loaded = false;
-static int nEmulators = 0;
-static int nGames = 0;
-static bool playing = false;
 static pthread_cond_t increment_time = PTHREAD_COND_INITIALIZER;
+static char * exe_dir;
+static cJSON *json;
+static char * css_format;
 
-void free_paths() {
-  for (int i = 0; i < nEmulators + 1; i++) {
-    free(emulator_paths[i]);
-  }
-  for (int i = 0; i < nGames + 1; i++) {
-    free(game_paths[i]);
-  }
+/* Structures */
+struct widgets {
+	GtkWidget *layout;
+	GtkWidget *play;
+	GtkWidget *program_name;
+	GtkWidget *input_name;
+	GtkWidget *program_combo;
+	GtkWidget *input_combo;
+	GtkWidget *playtime;
+};
 
-  free(emulator_paths);
-  free(game_paths);
+typedef struct Configuration {
+	double scale;
+	cJSON *systems;
+	cJSON *emulators;
+} Configuration;
+Configuration config;
+
+typedef struct State {
+	bool configuring;
+	bool playing;
+	bool launched;
+	int system_id;
+	cJSON *selected_emulator;
+	cJSON *selected_rom;
+} State;
+State state = { .configuring = false, .playing = false, .launched = false, .system_id = -1 };
+
+
+char * path_rel_to_abs(char * relative) {
+	char * abs = (char *) malloc(sizeof(char) * 1024);
+
+	strcpy(abs, exe_dir);
+	strcat(abs, "/");
+	strcat(abs, relative);
+	return abs;
 }
 
-void toggle_open(GtkWidget *widget, gpointer data) {
-  window_open = !window_open;
-}
-
-void update_file_playtime(struct widgets * widgets, int game_index, int minutes) {
-
-  FILE* games;
-  if (games = fopen("data/roms.txt", "rb+")) {
-    
-    int line_counter = 0;
-    char buffer[200] = {0};
-    while (line_counter < game_index + 1) {
-      fgets(buffer, 200, games);
-      line_counter++;
-    }
-    
-    char c;
-    for (int i = 0; i < 3; i++) {
-      while (c != ',' && c != EOF)
-        c = fgetc(games);
-      c = fgetc(games);
-    }
-    int playtime_location = ftell(games) - 1;
-    
-    while (c != '\n' && c != EOF)
-      c = fgetc(games);
-    c = fgetc(games);
-    int read_start = ftell(games) - 2; // subtract 2 because \r\n on windows
-    
-    int digits;
-    if (minutes == 0)
-      digits = 1;
-    else
-      digits = 1 + (int)(log10((double)minutes));
-    char new_minutes[digits];
-    snprintf(new_minutes, digits + 1, "%d", minutes);
-    
-    if (game_index < nGames - 1) {
-      fseek(games, 0, SEEK_END);
-      long size = ftell(games) - read_start;
-      fseek(games, read_start, SEEK_SET);
-      
-      char *temp = (char *)malloc(size + 1);
-      fread(temp, 1, size, games);
-      
-      temp[size] = 0;
-      
-      fseek(games, playtime_location, SEEK_SET);
-      if (playing) {
-        fwrite(new_minutes, sizeof(char), digits, games);
-        fwrite(temp, 1, size, games);
-      }
-      free(temp);
-    } else {
-      fseek(games, playtime_location, SEEK_SET);
-      if (playing) {
-        fwrite(new_minutes, sizeof(char), digits, games);
-      }
-    }
-    
-    
-    fclose(games);
-  }
-}
-
-int custom_wait(int seconds) {
-  pthread_mutex_t fakeMutex = PTHREAD_MUTEX_INITIALIZER;
-  
-  struct timespec timeToWait;
-  struct timeval now;
-  int rt;
-  
-  mingw_gettimeofday(&now, NULL);
-  
-  timeToWait.tv_sec = now.tv_sec + seconds;
-  
-  pthread_mutex_lock(&fakeMutex);
-  rt = pthread_cond_timedwait(&increment_time, &fakeMutex, &timeToWait);
-  pthread_mutex_unlock(&fakeMutex);
-  return rt;
+void store_data(char * data) {
+	char * path = path_rel_to_abs("config.json");
+	FILE *f = fopen(path, "wb");
+	
+	if (f != NULL) {
+		fputs(data, f);
+		fclose(f);
+	}
+	free(path);
 }
 
 void * timer_body(void *arg) {
-  
-  struct widgets * widgets = (struct widgets *)arg;
-  
-  int game_index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->input_combo));
-  
-  int loaded_minutes = playtimes[game_index + 1];
-  
-  char *time_str = display_time(loaded_minutes);
-  gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
-  free(time_str);
-  
-  int minutes = loaded_minutes;
-  time_t start, end;
-  time(&start);
-  
-  while (playing) {
-    
-    custom_wait(60);
-    
-    if (playing) {
-      minutes++;
-      
-      time_str = display_time(minutes);
-      
-      gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
+	
+	struct widgets * widgets = (struct widgets *)arg;
+	
+	int index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->input_combo));
+	
+	cJSON *rom = state.selected_rom;
+	cJSON *playtime_obj = cJSON_GetObjectItemCaseSensitive(rom, "playtime");
+	int loaded_minutes = cJSON_GetNumberValue(playtime_obj);
+	
+	char *time_str = display_time(loaded_minutes);
+	gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
+	free(time_str);
+	
+	int minutes = loaded_minutes;
+	time_t start, end;
+	time(&start);
+	
+	while (state.playing) {
+		
+		Sleep(1000 * 60);
 
-      playtimes[game_index + 1] = minutes;
-        
-      free(time_str);
-      
-      update_file_playtime(widgets, game_index, minutes);
-    }
-    
-  }
-  
-  time(&end);
-  int elapsed = difftime(end, start) / 60;
-  update_file_playtime(widgets, game_index, loaded_minutes + elapsed);
-  pthread_exit(NULL);
-  
+		if (state.playing) {
+			minutes++;
+			
+			time_str = display_time(minutes);
+			
+			gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
+			
+			cJSON_SetNumberValue(playtime_obj, minutes);
+			char * data = cJSON_Print(json);
+			if (data != NULL) {
+				store_data(data);
+			}
+	
+			free(time_str);
+			time(&end);
+		}
+	}
+	
+	int elapsed = difftime(end, start) / 60;
+	
+	cJSON_SetNumberValue(playtime_obj, loaded_minutes + elapsed);
+	char * data = cJSON_Print(json);
+	if (data != NULL) {
+		store_data(data);
+	}
+	pthread_exit(NULL);
+	
 }
 
 void quit() {
-  pthread_cond_signal(&increment_time);
-  gtk_main_quit();
+	pthread_cond_signal(&increment_time);
+	gtk_main_quit();
 }
 
 void * thread_body(void *arg) {
-  char * args = (char *)arg;
-  launched = true;
-  STARTUPINFO si;
-  PROCESS_INFORMATION pi;
+	struct thread_info {
+		char * args;
+		struct widgets * widgets;
+	};
+	struct thread_info * info = (struct thread_info *)arg;
+	char * args = info->args;
+	struct widgets * widgets = info->widgets;
 
-  ZeroMemory(&si, sizeof(si));
-  si.cb = sizeof(si);
-  ZeroMemory(&pi, sizeof(pi));
+	state.launched = true;
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
 
-  playing = true;
-  
-  // Start the child process.
-  if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-    fprintf(stderr, "Couldn't create process");
-  }
-  
-  // Wait until child process exits.
-  WaitForSingleObject( pi.hProcess, INFINITE );
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+	ZeroMemory(&pi, sizeof(pi));
 
-  playing = false;
-  
-  pthread_join(timer_id, NULL);
-  
-  // Close process and thread handles.
-  CloseHandle(pi.hProcess);
-  CloseHandle(pi.hThread);
+	gtk_label_set_text(GTK_LABEL(widgets->play), "PLAYING");
 
-  pthread_exit(NULL);
+	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 88 * config.scale, 56 * config.scale);
+
+	// Start the child process.
+	if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+		fprintf(stderr, "Couldn't create process");
+	}
+	
+	// Wait until child process exits.
+	WaitForSingleObject( pi.hProcess, INFINITE );
+
+	state.playing = false;
+	
+	gtk_label_set_text(GTK_LABEL(widgets->play), "PLAY");
+
+	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 96 * config.scale, 56 * config.scale);
+	free(info);
+	
+	pthread_join(timer_id, NULL);
+	
+	// Close process and thread handles.
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+
+	pthread_exit(NULL);
 }
 
 
 
 char * select_file(GtkWindow *parent) {
-  GtkFileChooserNative *native = gtk_file_chooser_native_new("Select emulator executable", parent, GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
-  gint res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(native));
-  
-  if (res == GTK_RESPONSE_ACCEPT)
-  {
-    GtkFileChooser *chooser = GTK_FILE_CHOOSER(native);
-    return gtk_file_chooser_get_filename(chooser);
-  }
+	GtkFileChooserNative *native = gtk_file_chooser_native_new("Select emulator executable", parent, GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
+	gint res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(native));
+	
+	if (res == GTK_RESPONSE_ACCEPT)
+	{
+		GtkFileChooser *chooser = GTK_FILE_CHOOSER(native);
+		return gtk_file_chooser_get_filename(chooser);
+	}
 }
 
-static void add_item(GtkWidget *widget, GdkEvent *event, gpointer data) {
-  if (window_open)
-    return;
-  
-  char * type = (char *)data;
-  GtkWidget *window;
-  char title[13];
-  
-  strcpy(title, "Add ");
-  strcat(title, type);
-  
-  window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  gtk_window_set_title(GTK_WINDOW(window), (const gchar *)title);
-  gtk_window_set_default_size(GTK_WINDOW(window), 400, 250);
-  
-  GtkWidget *layout = gtk_layout_new(NULL, NULL);
-  gtk_container_add(GTK_CONTAINER(window), layout);
-  gtk_widget_show(layout);
-
-  GtkWidget *path = gtk_entry_new();
-  gtk_widget_set_size_request(path, 200, 30);
-  gtk_layout_put(GTK_LAYOUT(layout), path, 20, 20);
-
-  GtkWidget *browse = gtk_button_new_with_label("Browse");
-  gtk_widget_set_size_request(browse, 50, 30);
-  gtk_layout_put(GTK_LAYOUT(layout), browse, 225, 20);
-  //g_signal_connect (browse, "clicked", G_CALLBACK (launch), NULL);
-
-  
-  //gtk_widget_set_size_request(file_chooser, 100, 30);
-  
-  //gtk_layout_put(GTK_LAYOUT(layout), file_chooser, 20, 20);
-  
-  g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(toggle_open), NULL);
-  gtk_widget_show_all (window);
-  toggle_open(NULL, NULL);
+void close_configuration(GtkWidget *widget, gpointer data) {
+	state.configuring = false;
 }
 
+void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
+	if (state.configuring) {
+		return;
+	}
+	state.configuring = true;
+	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	gtk_window_set_title(GTK_WINDOW(window), "Configuration");
+	gtk_window_set_default_size(GTK_WINDOW(window), 500, 300);
+	
+	GtkWidget *layout = gtk_layout_new(NULL, NULL);
+	gtk_container_add(GTK_CONTAINER(window), layout);
+	gtk_widget_show(layout);
+	
+	g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(close_configuration), NULL);
+	gtk_widget_show_all (window);
+}
+/*
+static void edit(GtkWidget *widget, GdkEvent *event, gpointer data) {
+	//if (window_open)
+	//	return;
+	
+	char * type = (char *)data;
+	GtkWidget *window;
+	char title[14];
+	
+	strcpy(title, "Edit ");
+	strcat(title, type);
+	strcat(title, "s");
+	
+	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	gtk_window_set_title(GTK_WINDOW(window), (const gchar *)title);
+	gtk_window_set_default_size(GTK_WINDOW(window), 400, 250);
+	
+	GtkWidget *layout = gtk_layout_new(NULL, NULL);
+	gtk_container_add(GTK_CONTAINER(window), layout);
+	gtk_widget_show(layout);
+
+	GtkWidget *path = gtk_entry_new();
+	gtk_widget_set_size_request(path, 200, 30);
+	gtk_layout_put(GTK_LAYOUT(layout), path, 20, 20);
+
+	GtkWidget *browse = gtk_button_new_with_label("Browse");
+	gtk_widget_set_size_request(browse, 50, 30);
+	gtk_layout_put(GTK_LAYOUT(layout), browse, 225, 20);
+	//g_signal_connect (browse, "clicked", G_CALLBACK (launch), NULL);
+
+	
+	//gtk_widget_set_size_request(file_chooser, 100, 30);
+	
+	//gtk_layout_put(GTK_LAYOUT(layout), file_chooser, 20, 20);
+	
+	g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(toggle_open), NULL);
+	gtk_widget_show_all (window);
+	toggle_open(NULL, NULL);
+}
+*/
 void delete_item(GtkWidget *widget, gpointer data) {
 
 }
 
+
 void launch (GtkWidget *widget, gpointer data) {
-    
-  struct widgets * widgets = (struct widgets *)data;  
-    
-  // Construct args string from program name and input paths
+	if (state.playing) {
+		return;
+	}
+	struct widgets * widgets = (struct widgets *)data;	
 
-  char *launch_args = (char *)malloc(sizeof(char) * 1024);
-  int program_index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->program_combo));
-  int input_index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->input_combo));
-
-  if (program_index > -1 && input_index > -1) {
-    
-    char * program_str = emulator_paths[program_index + 1];
-    
-    char * input_str = game_paths[input_index + 1];
-
-    strcpy(launch_args, program_str);
-    strcat(launch_args, " ");
-    strcat(launch_args, input_str);
-    
-    int err = pthread_create(&id, NULL, thread_body, (void *)launch_args);
-    
-    if (err) {
-      fprintf(stderr, "Can't create thread with id %ld\n", id);
-      exit(1);
-    }
-    
-    err = pthread_create(&timer_id, NULL, timer_body, (void *)widgets);
-      
-    if (err) {
-      fprintf(stderr, "Can't create thread with id %ld\n", timer_id);
-      exit(1);
-    }
-    
-  } else {
-    g_print("No program or emulator selected\n");
-  }
-    
-  free(launch_args);
-
+	char *launch_args = (char *)malloc(sizeof(char) * 1024);
+	
+	cJSON *emulator = state.selected_emulator;
+	cJSON *rom = state.selected_rom;
+	
+	if (emulator != NULL && rom != NULL) {
+		cJSON *emulator_path_obj = cJSON_GetObjectItemCaseSensitive(emulator, "path");
+		char * emulator_path = cJSON_GetStringValue(emulator_path_obj);
+		
+		cJSON *emulator_flags_obj = cJSON_GetObjectItemCaseSensitive(emulator, "flags");
+		char * emulator_flags = cJSON_GetStringValue(emulator_flags_obj);
+		
+		cJSON *rom_path_obj = cJSON_GetObjectItemCaseSensitive(rom, "path");
+		char * rom_path = cJSON_GetStringValue(rom_path_obj);
+		
+		
+		
+		strcpy(launch_args, "\"");
+		strcat(launch_args, emulator_path);
+		strcat(launch_args, "\" ");
+		strcat(launch_args, emulator_flags);
+		strcat(launch_args, " \"");
+		strcat(launch_args, rom_path);
+		strcat(launch_args, "\"");
+		
+		g_print(launch_args);
+		
+		/* Launch emulator with rom */
+		
+		struct thread_info {
+			char * args;
+			struct widgets * widgets;
+		};
+		struct thread_info * info = (struct thread_info *)malloc(sizeof(struct thread_info));
+		info->args = launch_args;
+		info->widgets = widgets;
+		
+		state.playing = true;
+		
+		int err = pthread_create(&id, NULL, thread_body, (void *)info);
+		
+		if (err) {
+			fprintf(stderr, "Can't create thread with id %ld\n", id);
+			exit(1);
+		}
+		
+		/* Start timer thread */
+		err = pthread_create(&timer_id, NULL, timer_body, (void *)widgets);
+		
+		if (err) {
+			fprintf(stderr, "Can't create thread with id %ld\n", timer_id);
+			exit(1);
+		}
+	} else {
+		g_print("No program or emulator selected\n");
+	}
+		
+	free(launch_args);
 }
 
-int count_lines(FILE* open_file) {
-    // Count lines
-    int lines = 0;
-    char c;
-    while (!feof(open_file)) {
-      c = fgetc(open_file);
-      if (c == '\n')
-        lines++;
-    }
-    return lines + 1;
-}
 
-int refresh_data(GtkWidget *program_combo, GtkWidget *input_combo) {
-  if (!loaded)
-    return 1;
-  free_paths();
-  gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(program_combo));
-  gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(input_combo));
-  load_data(program_combo, input_combo);
-  return 0;
-}
-
-int load_data(GtkWidget *program_combo, GtkWidget *input_combo) {
-  // Load emulators
-  FILE *emulators;
-  if (emulators = fopen("data/emulators.txt", "r")) {
-    nEmulators = count_lines(emulators) - 1;
-    rewind(emulators);
-    int nDisabled = 0;
-    if ((emulator_paths = (char **)malloc(sizeof(char *) * (nEmulators + 1))) == NULL) {
-      perror("malloc");
-      exit(0);
-    }
-    for (int i = 0; i < nEmulators + 1; i++) {
-      if ((emulator_paths[i] = (char *)malloc(200 * sizeof(char))) == NULL) {
-        perror("malloc");
-        exit(0);
-      }
-      
-      char buffer[200] = {0};
-      
-      if (fgets(buffer, 200, emulators) != buffer)
-        return 1;
-      
-      // Skip line if it's the header row or if item is hidden
-      if (i == 0)
-        continue;
-      
-      if (buffer[0] == 'N') {
-        nDisabled++;
-        continue;
-      }
-
-      int r = 2;
-      while (buffer[r] != ',' && r < 200) {
-        r++;
-      }
-      buffer[r] = 0;
-      char * name = buffer + 2;
-
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
-
-      char * path = buffer + r + 1;
-      
-      int path_length = strlen(path);
-      if (path[path_length - 1] == '\n')
-        path[path_length - 1] = 0;
-      
-      strcpy(emulator_paths[i - nDisabled], path);
-      
-    }
-    fclose(emulators);
-  } 
-  else {
-    emulators = fopen("data/emulators.txt", "w");
-    fclose(emulators);
-  }
-  
-  
-  // Load games and playtime
-  FILE *games;
-  if (games = fopen("data/roms.txt", "r")) {
-    nGames = count_lines(games) - 1;
-    rewind(games);
-    int nDisabled = 0;
-    if ((game_paths = (char **)malloc(sizeof(char *) * (nGames + 1))) == NULL) {
-      perror("malloc");
-      exit(0);
-    }
-    if ((playtimes = (int *)malloc(sizeof(int) * (nGames + 1))) == NULL) {
-      perror("malloc");
-      exit(0);
-    }
-    for (int i = 0; i < nGames + 1; i++) {
-      if ((game_paths[i] = (char *)malloc(200 * sizeof(char))) == NULL) {
-        perror("malloc");
-        exit(0);
-      }
-      char buffer[200] = {0};
-      
-      if (fgets(buffer, 200, games) != buffer)
-        return 1;
-
-      if (i == 0)
-        continue;
-      
-      if (buffer[0] == 'N') {
-        nDisabled++;
-        continue;
-      }
-
-      int r = 2;
-      while (buffer[r] != ',' && r < 200)
-        r++;
-      buffer[r] = 0;
-      char * name = buffer + 2;
-      gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(input_combo), NULL, name);
-
-      int r1 = r + 1;
-      while (buffer[r1] != ',' && r < 200)
-        r1++;
-      buffer[r1] = 0;
-
-      char * path = buffer + r + 1;
-      
-      //if (path[path_length - 1] == '\n')
-      //  path[path_length - 1] = 0;
-      
-      strcpy(game_paths[i - nDisabled], path);
-
-      char * playtime = buffer + r1 + 1;
-      int playtime_length = strlen(playtime);
-      if (playtime[playtime_length - 1] == '\n')
-        playtime[playtime_length - 1] = 0;
-
-      playtimes[i - nDisabled] = atoi(playtime);
-      
-    }
-    fclose(games);
-  } else {
-    games = fopen("data/roms.txt", "w");
-    fclose(games);
-  }
-  
-  loaded = true;
-  
-  return 0;
+int load_data() {
+	gchar *contents;
+	GError *err = NULL;
+	
+	char * path = path_rel_to_abs("config.json");
+	if (g_file_get_contents(path, &contents, NULL, &err)) { 
+		json = cJSON_Parse(contents);
+		
+		if (json == NULL) {
+			const char *error_ptr = cJSON_GetErrorPtr();
+			if (error_ptr != NULL)
+				g_printerr("Error before: %s\n", error_ptr);
+		}
+		
+		cJSON *scaleObj = cJSON_GetObjectItemCaseSensitive(json, "scale");
+		config.scale = cJSON_GetNumberValue(scaleObj);
+		
+		config.systems = cJSON_GetObjectItemCaseSensitive(json, "systems");
+		const cJSON *system = NULL;
+		
+		config.emulators = cJSON_GetObjectItemCaseSensitive(json, "emulators");
+	}
+	free(path);
 }
 
 char * display_time(int minutes) {
-  int hours = minutes / 60;
-  int days = hours / 24;
-  hours -= days * 24;
-  minutes = minutes - days * 24 * 60 - hours * 60;
-  char * output = (char *)malloc(sizeof(char) * 9);
-  if (output == NULL) {
-    perror("malloc");
-    exit(0);
-  }
-  snprintf(output, 9, "%0*d:%0*d:%0*d", 2, days, 2, hours, 2, minutes);
-  return output;
+	int hours = minutes / 60;
+	int days = hours / 24;
+	hours -= days * 24;
+	minutes = minutes - days * 24 * 60 - hours * 60;
+	char * output = (char *)malloc(sizeof(char) * 9);
+	if (output == NULL) {
+		perror("malloc");
+		exit(0);
+	}
+	snprintf(output, 9, "%0*d:%0*d:%0*d", 2, days, 2, hours, 2, minutes);
+	return output;
 }
 
-void update_combo(GtkWidget *combo, gpointer data) {
-  struct widgets * widgets = (struct widgets *)data;
-  
-  char * str = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
-  
-  GtkWidget *label;
-  if (combo == widgets->program_combo) {
-    label = widgets->program_name;
-  } else {
-    label = widgets->input_name;
-    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
-    
-    char *time;
-    if (str == NULL)
-       time = display_time(0);
-    else 
-       time = display_time(playtimes[i + 1]);
-    gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
-    free(time);
-    
-  }
-  gtk_label_set_text(GTK_LABEL(label), str);
-  
-  
-  
-  g_free(str);
+
+void update_program_combo(GtkWidget *program_combo) {
+	cJSON *emulator = NULL;
+	
+	int emulator_count = 0;
+	
+	cJSON_ArrayForEach(emulator, config.emulators) {
+		cJSON *nameObj = cJSON_GetObjectItemCaseSensitive(emulator, "name");
+		char * name = cJSON_GetStringValue(nameObj);
+		gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
+		
+		emulator_count ++;
+	}
+	if (emulator_count > 0) {
+		gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
+	}
+}
+
+void update_selected(GtkWidget *combo, gpointer data) {
+	struct widgets * widgets = (struct widgets *)data;
+	
+	int index = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
+	
+	GtkWidget *label;
+	
+	char * time = display_time(0);
+	
+	if (combo == widgets->program_combo) {
+		/* Program combo */
+		
+		label = widgets->program_name;
+		
+		/* Change options in input combo */
+		
+		cJSON *emulator = cJSON_GetArrayItem(config.emulators, index);
+		state.selected_emulator = emulator;
+		
+		cJSON *system_id_obj = cJSON_GetObjectItemCaseSensitive(emulator, "system");
+		int system_id = cJSON_GetNumberValue(system_id_obj);
+		
+		if (system_id != state.system_id) {
+			
+			/* Clear the combo box */
+			gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(widgets->input_combo));
+			
+			cJSON *system = cJSON_GetArrayItem(config.systems, system_id);
+			cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
+			
+			cJSON *rom = NULL;
+			
+			int rom_count = 0;
+			
+			cJSON_ArrayForEach(rom, roms) {
+				cJSON *nameObj = cJSON_GetObjectItemCaseSensitive(rom, "name");
+				char * name = cJSON_GetStringValue(nameObj);
+				gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(widgets->input_combo), NULL, name);
+				
+				rom_count ++;
+			}
+			
+			gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
+			free(time);
+			
+			state.system_id = system_id;
+			
+			if (rom_count > 0) {
+				gtk_combo_box_set_active(GTK_COMBO_BOX(widgets->input_combo), 0);
+				
+				update_selected(widgets->input_combo, data);
+			}
+		}
+	} else {
+		/* Input combo */
+		
+		label = widgets->input_name;
+		
+		/* Load playtime for this rom */
+		cJSON *system = cJSON_GetArrayItem(config.systems, state.system_id);
+		cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
+		
+		cJSON *rom = cJSON_GetArrayItem(roms, index);
+		state.selected_rom = rom;
+		
+		cJSON *playtime_obj = cJSON_GetObjectItemCaseSensitive(rom, "playtime");
+		int playtime = cJSON_GetNumberValue(playtime_obj);
+			
+		time = display_time(playtime);
+		
+		gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
+		free(time);
+	}
+	char * text = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
+	if (text != NULL) {
+		if (strlen(text) > 9) {
+			text[9] = 0;
+		}
+		gtk_label_set_text(GTK_LABEL(label), text);
+	}
+	
+}
+
+char * load_css_with_font_size(char * relpath, double font_size) {
+	gchar *css_path = path_rel_to_abs(relpath);
+	
+	char * template;
+	
+	char * css = (char *) malloc(sizeof(char) * 1024);
+	
+	GError *err = NULL;
+	if (g_file_get_contents(css_path, &template, NULL, &err)) {
+		snprintf(css, 1024, template, font_size);
+	} else {
+		perror("g_file_get_contents");
+	}
+	return css;
 }
 
 int create_window(struct widgets *widgets) {
-    
-  int status;
-  
-  // Create Window
-  GtkWidget *window;
+		
+	int status;
+	
+	/* Create window */
+	GtkWidget *window;
 
-  window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  gtk_window_set_title (GTK_WINDOW (window), "RomBox");
-  gtk_window_set_default_size (GTK_WINDOW (window), 224 * scale, 160 * scale);
-  
-  GtkWidget *playtime = gtk_label_new(NULL);
-  
-  widgets->playtime = playtime;
-  
-  GtkWidget *program_name = gtk_label_new(NULL);
-  GtkWidget *input_name = gtk_label_new(NULL);
-  
-  widgets->program_name = program_name;
-  widgets->input_name = input_name;
+	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	gtk_window_set_title (GTK_WINDOW (window), "RomBox");
+	gtk_window_set_default_size (GTK_WINDOW (window), 224 * config.scale, 160 * config.scale);
+	gtk_window_set_resizable(GTK_WINDOW(window), false);
+	
+	/* Create font descriptor */
+	PangoAttrList *font_attr_list = pango_attr_list_new();
+	PangoFontDescription *df = pango_font_description_new();
+	pango_font_description_set_family(df, "Tetris");
+	pango_font_description_set_absolute_size(df, 7 * config.scale * PANGO_SCALE);
+	PangoAttribute *attr = pango_attr_font_desc_new(df);
+	pango_attr_list_insert(font_attr_list, attr);
+	
+	/* Layout */
+	GtkWidget *layout = gtk_layout_new(NULL, NULL);
+	gtk_container_add(GTK_CONTAINER(window), layout);
+	
+	gtk_widget_show(layout);
 
-  GtkWidget *program_combo = gtk_combo_box_text_new();
-  gtk_widget_set_size_request(program_combo, 88 * scale, 24 * scale);
-  gtk_widget_set_opacity(program_combo, 0);
-  
-  widgets->program_combo = program_combo;
+	widgets->layout = layout;
+	
+	/* Background image */
+	char * path = path_rel_to_abs("resources/template.png");
+	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, NULL);
+	GtkWidget *image = gtk_image_new();
+	free(path);
+	
+	GdkPixbuf *pixbuf_scaled = gdk_pixbuf_scale_simple(pixbuf, 224 * config.scale, 160 * config.scale, GDK_INTERP_NEAREST);
+	gtk_image_set_from_pixbuf(GTK_IMAGE(image), pixbuf_scaled);
+	
+	g_object_unref(pixbuf_scaled);
+	
+	/* Playtime label */
+	GtkWidget *playtime = gtk_label_new(NULL);
+	gtk_label_set_attributes(GTK_LABEL(playtime), font_attr_list);
+	widgets->playtime = playtime;
+	
+	/* Program name label */
+	GtkWidget *program_name = gtk_label_new(NULL);
+	gtk_label_set_attributes(GTK_LABEL(program_name), font_attr_list);
+	widgets->program_name = program_name;
+	
+	/* Input name label */
+	GtkWidget *input_name = gtk_label_new(NULL);
+	gtk_label_set_attributes(GTK_LABEL(input_name), font_attr_list);
+	widgets->input_name = input_name;
 
-  GtkWidget *input_combo = gtk_combo_box_text_new();
-  gtk_widget_set_size_request(input_combo, 88 * scale, 24 * scale);
-  gtk_widget_set_opacity(input_combo, 0);
-  
-  widgets->input_combo = input_combo;
-  
-  g_signal_connect(program_combo, "changed", G_CALLBACK(update_combo), (gpointer)widgets);
-  g_signal_connect(input_combo, "changed", G_CALLBACK(update_combo), (gpointer)widgets);
-  
-  GError *error = NULL;
+	/* Program combo */
+	GtkWidget *program_combo = gtk_combo_box_text_new();
+	gtk_widget_set_size_request(program_combo, 72 * config.scale, 24 * config.scale);
+	gtk_widget_set_opacity(program_combo, 0);
+	gtk_combo_box_set_popup_fixed_width(GTK_COMBO_BOX(program_combo), TRUE);
+	
+	widgets->program_combo = program_combo;
 
-  const gchar *css_relpath = "styles.css";
-  GFile *css_file = g_file_new_for_path(css_relpath);
+	/* Input combo */
+	GtkWidget *input_combo = gtk_combo_box_text_new();
+	gtk_widget_set_size_request(input_combo, 72 * config.scale + 4, 24 * config.scale);
+	gtk_widget_set_opacity(input_combo, 0);
+	gtk_combo_box_set_popup_fixed_width(GTK_COMBO_BOX(input_combo), TRUE);
+	
+	widgets->input_combo = input_combo;
+	
+	/* Update combo boxes */
+	update_program_combo(program_combo);
+	update_selected(program_combo, widgets);
+	update_selected(input_combo, widgets);
+	
+	/* Event handlers for combo boxes */
+	g_signal_connect(program_combo, "changed", G_CALLBACK(update_selected), (gpointer)widgets);
+	g_signal_connect(input_combo, "changed", G_CALLBACK(update_selected), (gpointer)widgets);
+	
+	/* CSS */
+	GError *error = NULL;
+	
+	g_print("font size should be %f\n", 7 * config.scale);
+	char * css = load_css_with_font_size("styles.css", 7 * config.scale);
 
-  GtkCssProvider *cssProvider = gtk_css_provider_new();
-  gtk_css_provider_load_from_file(cssProvider, css_file, &error);
-  gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
+	GtkCssProvider *cssProvider = gtk_css_provider_new();
+	gtk_css_provider_load_from_data(cssProvider, css, -1, &error);
+	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(cssProvider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 
-  g_object_unref(css_file);
+	free(css);
 
-  GtkWidget *layout = gtk_layout_new(NULL, NULL);
-  gtk_container_add(GTK_CONTAINER(window), layout);
-  gtk_widget_show(layout);
+	/* Play button */
+	GtkWidget *play = gtk_label_new("PLAY");
+	gtk_label_set_attributes(GTK_LABEL(play), font_attr_list);
+	widgets->play = play;
 
-  GtkWidget *image = gtk_image_new_from_file("resources/bg.png");
-  gtk_widget_set_size_request(image, 224 * scale, 160 * scale);
+	GtkWidget *button = gtk_button_new_with_label ("play");
+	gtk_widget_set_size_request(button, 112 * config.scale, 24 * config.scale);
+	gtk_widget_set_opacity(button, 0);
+	
+	g_signal_connect (button, "clicked", G_CALLBACK (launch), (gpointer)widgets);
+	
+	/* Options button */
+	GtkWidget *config_label = gtk_label_new("CONF");
+	gtk_label_set_attributes(GTK_LABEL(config_label), font_attr_list);
+	
+	GtkWidget *config_button = gtk_button_new_with_label("config");
+	gtk_widget_set_size_request(config_button, 48 * config.scale, 24 * config.scale);
+	gtk_widget_set_opacity(config_button, 0);
 
-  GtkWidget *button = gtk_button_new_with_label ("play");
-  gtk_widget_set_size_request(button, 112 * scale, 24 * scale);
-  gtk_widget_set_opacity(button, 0);
+	g_signal_connect(GTK_CONTAINER(config_button), "clicked", G_CALLBACK (configure), NULL);
+	
+	/* Add widgets to layout */
+	
+	gtk_layout_put(GTK_LAYOUT(layout), image, 0, 0);
+	
+	gtk_layout_put(GTK_LAYOUT(layout), program_name, 24 * config.scale, 16 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), program_combo, 24 * config.scale - 4, 8 * config.scale);
+	
+	gtk_layout_put(GTK_LAYOUT(layout), input_name, 128 * config.scale, 16 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), input_combo, 128 * config.scale - 2, 8 * config.scale);
+	
+	gtk_layout_put(GTK_LAYOUT(layout), play, 96 * config.scale, 56 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), button, 56 * config.scale, 48 * config.scale);
+	
+	gtk_layout_put(GTK_LAYOUT(layout), config_label, 16 * config.scale, 128 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), config_button, 8 * config.scale, 120 * config.scale);
+	
+	gtk_layout_put(GTK_LAYOUT(layout), playtime, 80 * config.scale, 112 * config.scale);
 
-  // Load data from files
-  load_data(program_combo, input_combo);
-  
-  if (nEmulators > 0)
-    gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
-  
-  if (nGames > 0)
-    gtk_combo_box_set_active(GTK_COMBO_BOX(input_combo), 0);
- 
-  g_signal_connect (button, "clicked", G_CALLBACK (launch), (gpointer)widgets);
+	gtk_widget_show_all (window);
 
-  GtkWidget *play = gtk_label_new("PLAY");
+	g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(quit), NULL);
+	
+	/* Free font stuff */
+	pango_font_description_free(df);
+	pango_attr_list_unref(font_attr_list);
 
-  GtkWidget *add_emulator = gtk_event_box_new();
-  gtk_widget_set_size_request(add_emulator, 8 * scale, 8 * scale);
-  gtk_widget_set_opacity(add_emulator, 1);
-  g_signal_connect(GTK_CONTAINER(add_emulator), "button_press_event", G_CALLBACK (add_item), (gpointer)"emulator");
-
-  GtkWidget *remove_emulator = gtk_event_box_new();
-  gtk_widget_set_size_request(remove_emulator, 8 * scale, 8 * scale);
-  gtk_widget_set_opacity(remove_emulator, 1);
-  g_signal_connect(GTK_CONTAINER(remove_emulator), "button_press_event", G_CALLBACK (delete_item), (gpointer)"emulator");
-  
-  GtkWidget *add_game = gtk_event_box_new();
-  gtk_widget_set_size_request(add_game, 8 * scale, 8 * scale);
-  gtk_widget_set_opacity(add_game, 1);
-  g_signal_connect(GTK_CONTAINER(add_game), "button_press_event", G_CALLBACK (add_item), (gpointer)"game");
-
-  GtkWidget *remove_game = gtk_event_box_new();
-  gtk_widget_set_size_request(remove_game, 8 * scale, 8 * scale);
-  gtk_widget_set_opacity(remove_game, 1);
-  g_signal_connect(GTK_CONTAINER(add_game), "button_press_event", G_CALLBACK (delete_item), (gpointer)"game");
-
-  gtk_layout_put(GTK_LAYOUT(layout), image, 0, 0);
-  gtk_layout_put(GTK_LAYOUT(layout), program_combo, 16 * scale, 8 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), input_combo, 120 * scale, 8 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), button, 56 * scale, 48 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), program_name, 24 * scale, 16 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), input_name, 128 * scale, 16 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), play, 96 * scale, 56 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), add_emulator, 104 * scale, 8 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), remove_emulator, 104 * scale, 24 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), add_game, 208 * scale, 8 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), remove_game, 208 * scale, 24 * scale);
-  gtk_layout_put(GTK_LAYOUT(layout), playtime, 80 * scale, 112 * scale);
-
-  g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(quit), NULL);
-  gtk_widget_show_all (window);
-
-  if (error) {
-    g_warning("%s", error->message);
-    g_clear_error(&error);
-  }
+	if (error) {
+		g_warning("%s", error->message);
+		g_clear_error(&error);
+	}
+	
+	return 0;
 }
 
 int main(int argc, char** argv) {
-  
-  time_t start, end;
-  int elapsed;
-  
-  struct widgets * widgets = (struct widgets *)malloc(sizeof(struct widgets));
-  if (widgets == NULL) {
-    perror("malloc");
-    exit(0);
-  }
+	
+	exe_dir = (char *) calloc(sizeof(char), 1024);
+	
+	GetModuleFileName(NULL, exe_dir, 1024);
+	int len = strlen(exe_dir);
+	exe_dir[len - strlen("RomBox.exe") - 1] = 0;
+	g_print("%s\n", exe_dir);
+	
+	time_t start, end;
+	int elapsed;
+	
+	struct widgets * widgets = (struct widgets *)malloc(sizeof(struct widgets));
+	if (widgets == NULL) {
+		perror("malloc");
+		exit(0);
+	}
+	
+	/* Load data from files */
+	load_data();
+	
+	gtk_init (&argc, &argv);
+	int status = create_window(widgets);
+	gtk_main();
 
-  gtk_init (&argc, &argv);
-  int status = create_window(widgets);
-  gtk_main();
-
-  if (launched)
-    pthread_join(id, NULL);
-  
-  free(widgets);
-  free(playtimes);
-  free_paths();
-  return status;
+	if (state.launched) {
+		pthread_join(id, NULL);
+	}
+	
+	free(widgets);
+	
+	cJSON_Delete(json);
+	
+	free(exe_dir);
+	return status;
 }
