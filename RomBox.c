@@ -543,7 +543,7 @@ int create_window(struct widgets *widgets) {
 
 	/* Input combo */
 	GtkWidget *input_combo = gtk_combo_box_text_new();
-	gtk_widget_set_size_request(input_combo, 72 * config.scale + 4, 24 * config.scale);
+	gtk_widget_set_size_request(input_combo, 72 * config.scale, 24 * config.scale);
 	gtk_widget_set_opacity(input_combo, 0);
 	gtk_combo_box_set_popup_fixed_width(GTK_COMBO_BOX(input_combo), TRUE);
 	
@@ -562,7 +562,7 @@ int create_window(struct widgets *widgets) {
 	GError *error = NULL;
 	
 	g_print("font size should be %f\n", 7 * config.scale);
-	char * css = load_css_with_font_size("styles.css", 7 * config.scale);
+	char * css = load_css_with_font_size("styles.css", 7.0 * config.scale);
 
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
 	gtk_css_provider_load_from_data(cssProvider, css, -1, &error);
@@ -596,10 +596,10 @@ int create_window(struct widgets *widgets) {
 	gtk_layout_put(GTK_LAYOUT(layout), image, 0, 0);
 	
 	gtk_layout_put(GTK_LAYOUT(layout), program_name, 24 * config.scale, 16 * config.scale);
-	gtk_layout_put(GTK_LAYOUT(layout), program_combo, 24 * config.scale - 4, 8 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), program_combo, 16 * config.scale, 8 * config.scale);
 	
 	gtk_layout_put(GTK_LAYOUT(layout), input_name, 128 * config.scale, 16 * config.scale);
-	gtk_layout_put(GTK_LAYOUT(layout), input_combo, 128 * config.scale - 2, 8 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), input_combo, 120 * config.scale, 8 * config.scale);
 	
 	gtk_layout_put(GTK_LAYOUT(layout), play, 96 * config.scale, 56 * config.scale);
 	gtk_layout_put(GTK_LAYOUT(layout), button, 56 * config.scale, 48 * config.scale);
