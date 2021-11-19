@@ -14,11 +14,17 @@
 #include <unistd.h>
 #include <math.h>
 #include <signal.h>
+
+#include "configure.h"
 #include "cJSON.h"
+
+#define DEFINE_GLOBALS
+#include "globals.h"
 
 /* Prototypes */
 int load_data();
 char * display_time(int minutes);
+void toggle_sensitive(GtkWidget *interactive_widget, GtkWidget *label);
 
 /* Global variables */
 static pthread_t id;
@@ -29,15 +35,7 @@ static cJSON *json;
 static char * css_format;
 
 /* Structures */
-struct widgets {
-	GtkWidget *layout;
-	GtkWidget *play;
-	GtkWidget *program_name;
-	GtkWidget *input_name;
-	GtkWidget *program_combo;
-	GtkWidget *input_combo;
-	GtkWidget *playtime;
-};
+
 
 typedef struct Configuration {
 	double scale;
@@ -47,15 +45,28 @@ typedef struct Configuration {
 Configuration config;
 
 typedef struct State {
-	bool configuring;
 	bool playing;
 	bool launched;
 	int system_id;
 	cJSON *selected_emulator;
 	cJSON *selected_rom;
 } State;
-State state = { .configuring = false, .playing = false, .launched = false, .system_id = -1 };
+State state = { .playing = false, .launched = false, .system_id = -1 };
 
+void cleanup() {
+	if (state.playing) {	
+		pthread_cancel(id);
+		pthread_cancel(timer_id);
+	}
+	
+	if (widgets != NULL)
+		free(widgets);
+	
+	cJSON_Delete(json);
+	
+	if (exe_dir != NULL)
+		free(exe_dir);
+}
 
 char * path_rel_to_abs(char * relative) {
 	char * abs = (char *) malloc(sizeof(char) * 1024);
@@ -78,8 +89,6 @@ void store_data(char * data) {
 }
 
 void * timer_body(void *arg) {
-	
-	struct widgets * widgets = (struct widgets *)arg;
 	
 	int index = gtk_combo_box_get_active(GTK_COMBO_BOX(widgets->input_combo));
 	
@@ -106,13 +115,15 @@ void * timer_body(void *arg) {
 			
 			gtk_label_set_text(GTK_LABEL(widgets->playtime), time_str);
 			
+			free(time_str);
+			
 			cJSON_SetNumberValue(playtime_obj, minutes);
 			char * data = cJSON_Print(json);
 			if (data != NULL) {
 				store_data(data);
 			}
 	
-			free(time_str);
+			
 			time(&end);
 		}
 	}
@@ -129,18 +140,18 @@ void * timer_body(void *arg) {
 }
 
 void quit() {
+	
 	pthread_cond_signal(&increment_time);
+	
 	gtk_main_quit();
 }
 
 void * thread_body(void *arg) {
 	struct thread_info {
 		char * args;
-		struct widgets * widgets;
 	};
 	struct thread_info * info = (struct thread_info *)arg;
 	char * args = info->args;
-	struct widgets * widgets = info->widgets;
 
 	state.launched = true;
 	STARTUPINFO si;
@@ -158,16 +169,21 @@ void * thread_body(void *arg) {
 	if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
 		fprintf(stderr, "Couldn't create process");
 	}
+	free(info);
 	
 	// Wait until child process exits.
 	WaitForSingleObject( pi.hProcess, INFINITE );
 
 	state.playing = false;
 	
+	toggle_sensitive(widgets->program_combo, widgets->program_name);
+	toggle_sensitive(widgets->input_combo, widgets->input_name);
+	toggle_sensitive(widgets->config_button, widgets->config_label);
+	
 	gtk_label_set_text(GTK_LABEL(widgets->play), "PLAY");
 
 	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 96 * config.scale, 56 * config.scale);
-	free(info);
+	
 	
 	pthread_join(timer_id, NULL);
 	
@@ -191,26 +207,7 @@ char * select_file(GtkWindow *parent) {
 	}
 }
 
-void close_configuration(GtkWidget *widget, gpointer data) {
-	state.configuring = false;
-}
 
-void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
-	if (state.configuring) {
-		return;
-	}
-	state.configuring = true;
-	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-	gtk_window_set_title(GTK_WINDOW(window), "Configuration");
-	gtk_window_set_default_size(GTK_WINDOW(window), 500, 300);
-	
-	GtkWidget *layout = gtk_layout_new(NULL, NULL);
-	gtk_container_add(GTK_CONTAINER(window), layout);
-	gtk_widget_show(layout);
-	
-	g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(close_configuration), NULL);
-	gtk_widget_show_all (window);
-}
 /*
 static void edit(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	//if (window_open)
@@ -255,12 +252,22 @@ void delete_item(GtkWidget *widget, gpointer data) {
 
 }
 
+void toggle_sensitive(GtkWidget *interactive_widget, GtkWidget *label) {
+	gboolean sensitivity = gtk_widget_get_sensitive(interactive_widget);
+	if (sensitivity == TRUE) {
+		gtk_widget_set_sensitive(interactive_widget, FALSE);
+		gtk_widget_set_name(label, "disabledlabel");
+	} else {
+		gtk_widget_set_sensitive(interactive_widget, TRUE);
+		gtk_widget_set_name(label, "whitelabel");
+	}
+}
+
 
 void launch (GtkWidget *widget, gpointer data) {
 	if (state.playing) {
 		return;
 	}
-	struct widgets * widgets = (struct widgets *)data;	
 
 	char *launch_args = (char *)malloc(sizeof(char) * 1024);
 	
@@ -287,17 +294,18 @@ void launch (GtkWidget *widget, gpointer data) {
 		strcat(launch_args, rom_path);
 		strcat(launch_args, "\"");
 		
-		g_print(launch_args);
-		
 		/* Launch emulator with rom */
 		
 		struct thread_info {
 			char * args;
-			struct widgets * widgets;
 		};
 		struct thread_info * info = (struct thread_info *)malloc(sizeof(struct thread_info));
 		info->args = launch_args;
-		info->widgets = widgets;
+		
+		toggle_sensitive(widgets->program_combo, widgets->program_name);
+		toggle_sensitive(widgets->input_combo, widgets->input_name);
+		toggle_sensitive(widgets->config_button, widgets->config_label);
+		
 		
 		state.playing = true;
 		
@@ -309,7 +317,7 @@ void launch (GtkWidget *widget, gpointer data) {
 		}
 		
 		/* Start timer thread */
-		err = pthread_create(&timer_id, NULL, timer_body, (void *)widgets);
+		err = pthread_create(&timer_id, NULL, timer_body, NULL);
 		
 		if (err) {
 			fprintf(stderr, "Can't create thread with id %ld\n", timer_id);
@@ -381,7 +389,6 @@ void update_program_combo(GtkWidget *program_combo) {
 }
 
 void update_selected(GtkWidget *combo, gpointer data) {
-	struct widgets * widgets = (struct widgets *)data;
 	
 	int index = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
 	
@@ -479,7 +486,7 @@ char * load_css_with_font_size(char * relpath, double font_size) {
 	return css;
 }
 
-int create_window(struct widgets *widgets) {
+int create_window() {
 		
 	int status;
 	
@@ -521,16 +528,19 @@ int create_window(struct widgets *widgets) {
 	/* Playtime label */
 	GtkWidget *playtime = gtk_label_new(NULL);
 	gtk_label_set_attributes(GTK_LABEL(playtime), font_attr_list);
+	gtk_widget_set_name(playtime, "whitelabel");
 	widgets->playtime = playtime;
 	
 	/* Program name label */
 	GtkWidget *program_name = gtk_label_new(NULL);
 	gtk_label_set_attributes(GTK_LABEL(program_name), font_attr_list);
+	gtk_widget_set_name(program_name, "whitelabel");
 	widgets->program_name = program_name;
 	
 	/* Input name label */
 	GtkWidget *input_name = gtk_label_new(NULL);
 	gtk_label_set_attributes(GTK_LABEL(input_name), font_attr_list);
+	gtk_widget_set_name(input_name, "whitelabel");
 	widgets->input_name = input_name;
 
 	/* Program combo */
@@ -555,13 +565,12 @@ int create_window(struct widgets *widgets) {
 	update_selected(input_combo, widgets);
 	
 	/* Event handlers for combo boxes */
-	g_signal_connect(program_combo, "changed", G_CALLBACK(update_selected), (gpointer)widgets);
-	g_signal_connect(input_combo, "changed", G_CALLBACK(update_selected), (gpointer)widgets);
+	g_signal_connect(program_combo, "changed", G_CALLBACK(update_selected), NULL);
+	g_signal_connect(input_combo, "changed", G_CALLBACK(update_selected), NULL);
 	
 	/* CSS */
 	GError *error = NULL;
 	
-	g_print("font size should be %f\n", 7 * config.scale);
 	char * css = load_css_with_font_size("styles.css", 7.0 * config.scale);
 
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
@@ -573,21 +582,26 @@ int create_window(struct widgets *widgets) {
 	/* Play button */
 	GtkWidget *play = gtk_label_new("PLAY");
 	gtk_label_set_attributes(GTK_LABEL(play), font_attr_list);
+	gtk_widget_set_name(play, "whitelabel");
 	widgets->play = play;
 
 	GtkWidget *button = gtk_button_new_with_label ("play");
 	gtk_widget_set_size_request(button, 112 * config.scale, 24 * config.scale);
 	gtk_widget_set_opacity(button, 0);
+	widgets->button = button;
 	
-	g_signal_connect (button, "clicked", G_CALLBACK (launch), (gpointer)widgets);
+	g_signal_connect (button, "clicked", G_CALLBACK (launch), NULL);
 	
 	/* Options button */
 	GtkWidget *config_label = gtk_label_new("CONF");
 	gtk_label_set_attributes(GTK_LABEL(config_label), font_attr_list);
+	gtk_widget_set_name(config_label, "whitelabel");
+	widgets->config_label = config_label;
 	
 	GtkWidget *config_button = gtk_button_new_with_label("config");
 	gtk_widget_set_size_request(config_button, 48 * config.scale, 24 * config.scale);
 	gtk_widget_set_opacity(config_button, 0);
+	widgets->config_button = config_button;
 
 	g_signal_connect(GTK_CONTAINER(config_button), "clicked", G_CALLBACK (configure), NULL);
 	
@@ -632,12 +646,11 @@ int main(int argc, char** argv) {
 	GetModuleFileName(NULL, exe_dir, 1024);
 	int len = strlen(exe_dir);
 	exe_dir[len - strlen("RomBox.exe") - 1] = 0;
-	g_print("%s\n", exe_dir);
 	
 	time_t start, end;
 	int elapsed;
 	
-	struct widgets * widgets = (struct widgets *)malloc(sizeof(struct widgets));
+	widgets = (struct widgets *)malloc(sizeof(struct widgets));
 	if (widgets == NULL) {
 		perror("malloc");
 		exit(0);
@@ -647,17 +660,9 @@ int main(int argc, char** argv) {
 	load_data();
 	
 	gtk_init (&argc, &argv);
-	int status = create_window(widgets);
+	int status = create_window();
 	gtk_main();
-
-	if (state.launched) {
-		pthread_join(id, NULL);
-	}
 	
-	free(widgets);
-	
-	cJSON_Delete(json);
-	
-	free(exe_dir);
+	cleanup();
 	return status;
 }

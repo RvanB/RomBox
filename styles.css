@@ -1,5 +1,13 @@
 label {
+	color: black;
+}
+
+#whitelabel {
 	color: white;
+}
+
+#disabledlabel {
+	color: #555;
 }
 
 combobox arrow {
