@@ -10,6 +10,10 @@ label {
 	color: #555;
 }
 
+#bold {
+	font-weight: bold;
+}
+
 combobox arrow {
 	border-radius: 0;
 	padding: 0;

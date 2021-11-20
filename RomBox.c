@@ -36,22 +36,13 @@ static char * css_format;
 
 /* Structures */
 
-
-typedef struct Configuration {
-	double scale;
-	cJSON *systems;
-	cJSON *emulators;
-} Configuration;
-Configuration config;
-
 typedef struct State {
 	bool playing;
-	bool launched;
-	int system_id;
+	char * system_name;
 	cJSON *selected_emulator;
 	cJSON *selected_rom;
 } State;
-State state = { .playing = false, .launched = false, .system_id = -1 };
+State state = { .playing = false, .system_name = "" };
 
 void cleanup() {
 	if (state.playing) {	
@@ -61,6 +52,8 @@ void cleanup() {
 	
 	if (widgets != NULL)
 		free(widgets);
+	if (config != NULL)
+		free(config);
 	
 	cJSON_Delete(json);
 	
@@ -122,8 +115,6 @@ void * timer_body(void *arg) {
 			if (data != NULL) {
 				store_data(data);
 			}
-	
-			
 			time(&end);
 		}
 	}
@@ -153,7 +144,6 @@ void * thread_body(void *arg) {
 	struct thread_info * info = (struct thread_info *)arg;
 	char * args = info->args;
 
-	state.launched = true;
 	STARTUPINFO si;
 	PROCESS_INFORMATION pi;
 
@@ -163,7 +153,7 @@ void * thread_body(void *arg) {
 
 	gtk_label_set_text(GTK_LABEL(widgets->play), "PLAYING");
 
-	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 88 * config.scale, 56 * config.scale);
+	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 88 * config->scale, 56 * config->scale);
 
 	// Start the child process.
 	if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
@@ -182,7 +172,7 @@ void * thread_body(void *arg) {
 	
 	gtk_label_set_text(GTK_LABEL(widgets->play), "PLAY");
 
-	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 96 * config.scale, 56 * config.scale);
+	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 96 * config->scale, 56 * config->scale);
 	
 	
 	pthread_join(timer_id, NULL);
@@ -192,64 +182,6 @@ void * thread_body(void *arg) {
 	CloseHandle(pi.hThread);
 
 	pthread_exit(NULL);
-}
-
-
-
-char * select_file(GtkWindow *parent) {
-	GtkFileChooserNative *native = gtk_file_chooser_native_new("Select emulator executable", parent, GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
-	gint res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(native));
-	
-	if (res == GTK_RESPONSE_ACCEPT)
-	{
-		GtkFileChooser *chooser = GTK_FILE_CHOOSER(native);
-		return gtk_file_chooser_get_filename(chooser);
-	}
-}
-
-
-/*
-static void edit(GtkWidget *widget, GdkEvent *event, gpointer data) {
-	//if (window_open)
-	//	return;
-	
-	char * type = (char *)data;
-	GtkWidget *window;
-	char title[14];
-	
-	strcpy(title, "Edit ");
-	strcat(title, type);
-	strcat(title, "s");
-	
-	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-	gtk_window_set_title(GTK_WINDOW(window), (const gchar *)title);
-	gtk_window_set_default_size(GTK_WINDOW(window), 400, 250);
-	
-	GtkWidget *layout = gtk_layout_new(NULL, NULL);
-	gtk_container_add(GTK_CONTAINER(window), layout);
-	gtk_widget_show(layout);
-
-	GtkWidget *path = gtk_entry_new();
-	gtk_widget_set_size_request(path, 200, 30);
-	gtk_layout_put(GTK_LAYOUT(layout), path, 20, 20);
-
-	GtkWidget *browse = gtk_button_new_with_label("Browse");
-	gtk_widget_set_size_request(browse, 50, 30);
-	gtk_layout_put(GTK_LAYOUT(layout), browse, 225, 20);
-	//g_signal_connect (browse, "clicked", G_CALLBACK (launch), NULL);
-
-	
-	//gtk_widget_set_size_request(file_chooser, 100, 30);
-	
-	//gtk_layout_put(GTK_LAYOUT(layout), file_chooser, 20, 20);
-	
-	g_signal_connect_swapped(G_OBJECT(window), "destroy", G_CALLBACK(toggle_open), NULL);
-	gtk_widget_show_all (window);
-	toggle_open(NULL, NULL);
-}
-*/
-void delete_item(GtkWidget *widget, gpointer data) {
-
 }
 
 void toggle_sensitive(GtkWidget *interactive_widget, GtkWidget *label) {
@@ -346,12 +278,12 @@ int load_data() {
 		}
 		
 		cJSON *scaleObj = cJSON_GetObjectItemCaseSensitive(json, "scale");
-		config.scale = cJSON_GetNumberValue(scaleObj);
+		config->scale = cJSON_GetNumberValue(scaleObj);
 		
-		config.systems = cJSON_GetObjectItemCaseSensitive(json, "systems");
+		config->systems = cJSON_GetObjectItemCaseSensitive(json, "systems");
 		const cJSON *system = NULL;
 		
-		config.emulators = cJSON_GetObjectItemCaseSensitive(json, "emulators");
+		config->emulators = cJSON_GetObjectItemCaseSensitive(json, "emulators");
 	}
 	free(path);
 }
@@ -376,7 +308,7 @@ void update_program_combo(GtkWidget *program_combo) {
 	
 	int emulator_count = 0;
 	
-	cJSON_ArrayForEach(emulator, config.emulators) {
+	cJSON_ArrayForEach(emulator, config->emulators) {
 		cJSON *nameObj = cJSON_GetObjectItemCaseSensitive(emulator, "name");
 		char * name = cJSON_GetStringValue(nameObj);
 		gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
@@ -386,6 +318,16 @@ void update_program_combo(GtkWidget *program_combo) {
 	if (emulator_count > 0) {
 		gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
 	}
+}
+
+cJSON * get_array_item_with_kv_pair(cJSON *arr, char * key, char * value) {
+	cJSON * item = NULL;
+	for(item = (arr != NULL) ? (arr)->child : NULL; item != NULL; item = item->next) {
+		cJSON *name_obj = cJSON_GetObjectItemCaseSensitive(item, key);
+		if (strcmp(value, cJSON_GetStringValue(name_obj)) == 0)
+			return item;
+	}
+	return item;
 }
 
 void update_selected(GtkWidget *combo, gpointer data) {
@@ -403,18 +345,19 @@ void update_selected(GtkWidget *combo, gpointer data) {
 		
 		/* Change options in input combo */
 		
-		cJSON *emulator = cJSON_GetArrayItem(config.emulators, index);
+		cJSON *emulator = cJSON_GetArrayItem(config->emulators, index);
 		state.selected_emulator = emulator;
 		
-		cJSON *system_id_obj = cJSON_GetObjectItemCaseSensitive(emulator, "system");
-		int system_id = cJSON_GetNumberValue(system_id_obj);
+		cJSON *system_name_obj = cJSON_GetObjectItemCaseSensitive(emulator, "system");
+		char * system_name = cJSON_GetStringValue(system_name_obj);
 		
-		if (system_id != state.system_id) {
+		if (strcmp(system_name, state.system_name) != 0) {
 			
 			/* Clear the combo box */
 			gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(widgets->input_combo));
 			
-			cJSON *system = cJSON_GetArrayItem(config.systems, system_id);
+			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", system_name);
+			//cJSON *system = cJSON_GetArrayItem(config->systems, system_id);
 			cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
 			
 			cJSON *rom = NULL;
@@ -432,7 +375,8 @@ void update_selected(GtkWidget *combo, gpointer data) {
 			gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
 			free(time);
 			
-			state.system_id = system_id;
+			//state.system_id = system_id;
+			state.system_name = system_name;
 			
 			if (rom_count > 0) {
 				gtk_combo_box_set_active(GTK_COMBO_BOX(widgets->input_combo), 0);
@@ -446,7 +390,8 @@ void update_selected(GtkWidget *combo, gpointer data) {
 		label = widgets->input_name;
 		
 		/* Load playtime for this rom */
-		cJSON *system = cJSON_GetArrayItem(config.systems, state.system_id);
+		//cJSON *system = cJSON_GetArrayItem(config->systems, state.system_id);
+		cJSON *system = get_array_item_with_kv_pair(config->systems, "system", state.system_name);
 		cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
 		
 		cJSON *rom = cJSON_GetArrayItem(roms, index);
@@ -495,14 +440,14 @@ int create_window() {
 
 	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_window_set_title (GTK_WINDOW (window), "RomBox");
-	gtk_window_set_default_size (GTK_WINDOW (window), 224 * config.scale, 160 * config.scale);
+	gtk_window_set_default_size (GTK_WINDOW (window), 224 * config->scale, 160 * config->scale);
 	gtk_window_set_resizable(GTK_WINDOW(window), false);
 	
 	/* Create font descriptor */
 	PangoAttrList *font_attr_list = pango_attr_list_new();
 	PangoFontDescription *df = pango_font_description_new();
 	pango_font_description_set_family(df, "Tetris");
-	pango_font_description_set_absolute_size(df, 7 * config.scale * PANGO_SCALE);
+	pango_font_description_set_absolute_size(df, 7 * config->scale * PANGO_SCALE);
 	PangoAttribute *attr = pango_attr_font_desc_new(df);
 	pango_attr_list_insert(font_attr_list, attr);
 	
@@ -520,7 +465,7 @@ int create_window() {
 	GtkWidget *image = gtk_image_new();
 	free(path);
 	
-	GdkPixbuf *pixbuf_scaled = gdk_pixbuf_scale_simple(pixbuf, 224 * config.scale, 160 * config.scale, GDK_INTERP_NEAREST);
+	GdkPixbuf *pixbuf_scaled = gdk_pixbuf_scale_simple(pixbuf, 224 * config->scale, 160 * config->scale, GDK_INTERP_NEAREST);
 	gtk_image_set_from_pixbuf(GTK_IMAGE(image), pixbuf_scaled);
 	
 	g_object_unref(pixbuf_scaled);
@@ -545,7 +490,7 @@ int create_window() {
 
 	/* Program combo */
 	GtkWidget *program_combo = gtk_combo_box_text_new();
-	gtk_widget_set_size_request(program_combo, 72 * config.scale, 24 * config.scale);
+	gtk_widget_set_size_request(program_combo, 72 * config->scale, 24 * config->scale);
 	gtk_widget_set_opacity(program_combo, 0);
 	gtk_combo_box_set_popup_fixed_width(GTK_COMBO_BOX(program_combo), TRUE);
 	
@@ -553,7 +498,7 @@ int create_window() {
 
 	/* Input combo */
 	GtkWidget *input_combo = gtk_combo_box_text_new();
-	gtk_widget_set_size_request(input_combo, 72 * config.scale, 24 * config.scale);
+	gtk_widget_set_size_request(input_combo, 72 * config->scale, 24 * config->scale);
 	gtk_widget_set_opacity(input_combo, 0);
 	gtk_combo_box_set_popup_fixed_width(GTK_COMBO_BOX(input_combo), TRUE);
 	
@@ -571,7 +516,7 @@ int create_window() {
 	/* CSS */
 	GError *error = NULL;
 	
-	char * css = load_css_with_font_size("styles.css", 7.0 * config.scale);
+	char * css = load_css_with_font_size("styles.css", 7.0 * config->scale);
 
 	GtkCssProvider *cssProvider = gtk_css_provider_new();
 	gtk_css_provider_load_from_data(cssProvider, css, -1, &error);
@@ -586,7 +531,7 @@ int create_window() {
 	widgets->play = play;
 
 	GtkWidget *button = gtk_button_new_with_label ("play");
-	gtk_widget_set_size_request(button, 112 * config.scale, 24 * config.scale);
+	gtk_widget_set_size_request(button, 112 * config->scale, 24 * config->scale);
 	gtk_widget_set_opacity(button, 0);
 	widgets->button = button;
 	
@@ -599,7 +544,7 @@ int create_window() {
 	widgets->config_label = config_label;
 	
 	GtkWidget *config_button = gtk_button_new_with_label("config");
-	gtk_widget_set_size_request(config_button, 48 * config.scale, 24 * config.scale);
+	gtk_widget_set_size_request(config_button, 48 * config->scale, 24 * config->scale);
 	gtk_widget_set_opacity(config_button, 0);
 	widgets->config_button = config_button;
 
@@ -609,19 +554,19 @@ int create_window() {
 	
 	gtk_layout_put(GTK_LAYOUT(layout), image, 0, 0);
 	
-	gtk_layout_put(GTK_LAYOUT(layout), program_name, 24 * config.scale, 16 * config.scale);
-	gtk_layout_put(GTK_LAYOUT(layout), program_combo, 16 * config.scale, 8 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), program_name, 24 * config->scale, 16 * config->scale);
+	gtk_layout_put(GTK_LAYOUT(layout), program_combo, 16 * config->scale, 8 * config->scale);
 	
-	gtk_layout_put(GTK_LAYOUT(layout), input_name, 128 * config.scale, 16 * config.scale);
-	gtk_layout_put(GTK_LAYOUT(layout), input_combo, 120 * config.scale, 8 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), input_name, 128 * config->scale, 16 * config->scale);
+	gtk_layout_put(GTK_LAYOUT(layout), input_combo, 120 * config->scale, 8 * config->scale);
 	
-	gtk_layout_put(GTK_LAYOUT(layout), play, 96 * config.scale, 56 * config.scale);
-	gtk_layout_put(GTK_LAYOUT(layout), button, 56 * config.scale, 48 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), play, 96 * config->scale, 56 * config->scale);
+	gtk_layout_put(GTK_LAYOUT(layout), button, 56 * config->scale, 48 * config->scale);
 	
-	gtk_layout_put(GTK_LAYOUT(layout), config_label, 16 * config.scale, 128 * config.scale);
-	gtk_layout_put(GTK_LAYOUT(layout), config_button, 8 * config.scale, 120 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), config_label, 16 * config->scale, 128 * config->scale);
+	gtk_layout_put(GTK_LAYOUT(layout), config_button, 8 * config->scale, 120 * config->scale);
 	
-	gtk_layout_put(GTK_LAYOUT(layout), playtime, 80 * config.scale, 112 * config.scale);
+	gtk_layout_put(GTK_LAYOUT(layout), playtime, 80 * config->scale, 112 * config->scale);
 
 	gtk_widget_show_all (window);
 
@@ -652,6 +597,12 @@ int main(int argc, char** argv) {
 	
 	widgets = (struct widgets *)malloc(sizeof(struct widgets));
 	if (widgets == NULL) {
+		perror("malloc");
+		exit(0);
+	}
+	
+	config = (struct configuration *)malloc(sizeof(struct configuration));
+	if (config == NULL) {
 		perror("malloc");
 		exit(0);
 	}

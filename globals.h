@@ -22,5 +22,11 @@ struct widgets {
 	GtkWidget *config_button;
 	GtkWidget *config_label;
 };
+struct configuration {
+	double scale;
+	cJSON *systems;
+	cJSON *emulators;
+};
 
 GLOBAL_VAR(struct widgets *, widgets, NULL);
+GLOBAL_VAR(struct configuration *, config, NULL);

@@ -7,7 +7,7 @@ OBJS = ${SRCS:.c=.o}
 .SUFFIXES: .c .o
 
 rombox: $(OBJS)
-	$(CC) -o RomBox.exe $(OBJS) resources/icon.res $(LDFLAGS)
+	$(CC) $(CFLAGS) -o RomBox.exe $(OBJS) resources/icon.res $(LDFLAGS)
 	
 .c.o:; $(CC) $(CFLAGS) -c $<
 
