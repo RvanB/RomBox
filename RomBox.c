@@ -31,7 +31,6 @@ static pthread_t id;
 static pthread_t timer_id;
 static pthread_cond_t increment_time = PTHREAD_COND_INITIALIZER;
 static char * exe_dir;
-static cJSON *json;
 static char * css_format;
 
 /* Structures */
@@ -216,8 +215,6 @@ void launch (GtkWidget *widget, gpointer data) {
 		cJSON *rom_path_obj = cJSON_GetObjectItemCaseSensitive(rom, "path");
 		char * rom_path = cJSON_GetStringValue(rom_path_obj);
 		
-		
-		
 		strcpy(launch_args, "\"");
 		strcat(launch_args, emulator_path);
 		strcat(launch_args, "\" ");
@@ -267,9 +264,15 @@ int load_data() {
 	gchar *contents;
 	GError *err = NULL;
 	
+	//if (json != NULL) {
+	//	cJSON_Delete(json);
+	//}
+	
 	char * path = path_rel_to_abs("config.json");
 	if (g_file_get_contents(path, &contents, NULL, &err)) { 
-		json = cJSON_Parse(contents);
+		if (json == NULL) {
+			json = cJSON_Parse(contents);
+		}
 		
 		if (json == NULL) {
 			const char *error_ptr = cJSON_GetErrorPtr();
@@ -281,7 +284,6 @@ int load_data() {
 		config->scale = cJSON_GetNumberValue(scaleObj);
 		
 		config->systems = cJSON_GetObjectItemCaseSensitive(json, "systems");
-		const cJSON *system = NULL;
 		
 		config->emulators = cJSON_GetObjectItemCaseSensitive(json, "emulators");
 	}
@@ -304,13 +306,17 @@ char * display_time(int minutes) {
 
 
 void update_program_combo(GtkWidget *program_combo) {
+	
 	cJSON *emulator = NULL;
 	
 	int emulator_count = 0;
 	
+	gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(program_combo));
+	
 	cJSON_ArrayForEach(emulator, config->emulators) {
 		cJSON *nameObj = cJSON_GetObjectItemCaseSensitive(emulator, "name");
 		char * name = cJSON_GetStringValue(nameObj);
+		
 		gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
 		
 		emulator_count ++;
@@ -320,12 +326,16 @@ void update_program_combo(GtkWidget *program_combo) {
 	}
 }
 
-cJSON * get_array_item_with_kv_pair(cJSON *arr, char * key, char * value) {
+cJSON * get_array_item_with_kv_pair(cJSON *arr, char * key, char * value, int *index) {
 	cJSON * item = NULL;
+	if (index != NULL)
+		*index = 0;
 	for(item = (arr != NULL) ? (arr)->child : NULL; item != NULL; item = item->next) {
 		cJSON *name_obj = cJSON_GetObjectItemCaseSensitive(item, key);
 		if (strcmp(value, cJSON_GetStringValue(name_obj)) == 0)
 			return item;
+		if (index != NULL)
+			*index = *index + 1;
 	}
 	return item;
 }
@@ -333,7 +343,6 @@ cJSON * get_array_item_with_kv_pair(cJSON *arr, char * key, char * value) {
 void update_selected(GtkWidget *combo, gpointer data) {
 	
 	int index = gtk_combo_box_get_active(GTK_COMBO_BOX(combo));
-	
 	GtkWidget *label;
 	
 	char * time = display_time(0);
@@ -342,6 +351,12 @@ void update_selected(GtkWidget *combo, gpointer data) {
 		/* Program combo */
 		
 		label = widgets->program_name;
+		
+		if (index < 0) {
+			gtk_label_set_text(GTK_LABEL(label), "");
+			state.system_name = "";
+			return;
+		}
 		
 		/* Change options in input combo */
 		
@@ -356,7 +371,7 @@ void update_selected(GtkWidget *combo, gpointer data) {
 			/* Clear the combo box */
 			gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(widgets->input_combo));
 			
-			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", system_name);
+			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", system_name, NULL);
 			//cJSON *system = cJSON_GetArrayItem(config->systems, system_id);
 			cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
 			
@@ -381,7 +396,7 @@ void update_selected(GtkWidget *combo, gpointer data) {
 			if (rom_count > 0) {
 				gtk_combo_box_set_active(GTK_COMBO_BOX(widgets->input_combo), 0);
 				
-				update_selected(widgets->input_combo, data);
+				update_selected(widgets->input_combo, NULL);
 			}
 		}
 	} else {
@@ -389,9 +404,14 @@ void update_selected(GtkWidget *combo, gpointer data) {
 		
 		label = widgets->input_name;
 		
+		if (index < 0) {
+			gtk_label_set_text(GTK_LABEL(label), "");
+			return;
+		}
+		
 		/* Load playtime for this rom */
 		//cJSON *system = cJSON_GetArrayItem(config->systems, state.system_id);
-		cJSON *system = get_array_item_with_kv_pair(config->systems, "system", state.system_name);
+		cJSON *system = get_array_item_with_kv_pair(config->systems, "system", state.system_name, NULL);
 		cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
 		
 		cJSON *rom = cJSON_GetArrayItem(roms, index);
@@ -506,8 +526,8 @@ int create_window() {
 	
 	/* Update combo boxes */
 	update_program_combo(program_combo);
-	update_selected(program_combo, widgets);
-	update_selected(input_combo, widgets);
+	update_selected(program_combo, NULL);
+	update_selected(input_combo, NULL);
 	
 	/* Event handlers for combo boxes */
 	g_signal_connect(program_combo, "changed", G_CALLBACK(update_selected), NULL);

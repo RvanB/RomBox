@@ -30,3 +30,4 @@ struct configuration {
 
 GLOBAL_VAR(struct widgets *, widgets, NULL);
 GLOBAL_VAR(struct configuration *, config, NULL);
+GLOBAL_VAR(cJSON *, json, NULL);

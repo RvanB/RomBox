@@ -7,21 +7,38 @@
 #include "rombox.h"
 #include "globals.h"
 
+enum { DIALOG_TYPE_ADD, DIALOG_TYPE_EDIT };
+
 /* Globals */
 static GtkWidget *roms_treeview, *emulators_treeview;
 static GtkTreeIter roms_toplevel, roms_child, emulators_toplevel, emulators_child;
+static GtkWidget *roms_new, *roms_edit, *roms_remove, *emulators_new, *emulators_edit, *emulators_remove;
 
 typedef struct ConfigState {
 	cJSON *selected_rom;
+	int selected_rom_index;
+	cJSON *selected_rom_system;
 	cJSON *selected_emulator;
 } ConfigState;
-static ConfigState config_state = { .selected_rom = NULL, .selected_emulator = NULL };
+static ConfigState config_state = { .selected_rom = NULL, .selected_rom_index = -1, .selected_emulator = NULL };
 
 void close_configuration(GtkWidget *widget, gpointer data) {
 	toggle_sensitive(widgets->button, widgets->play);
 	toggle_sensitive(widgets->config_button, widgets->config_label);
-	
+	toggle_sensitive(widgets->program_combo, widgets->program_name);
+	toggle_sensitive(widgets->input_combo, widgets->input_name);
+
 	gtk_widget_destroy(widget);
+	
+	char * json_str = cJSON_Print(json);
+	
+	if (json_str != NULL)
+		store_data(json_str);
+	
+	/* Update combo boxes */
+	update_program_combo(widgets->program_combo);
+	update_selected(widgets->program_combo, NULL);
+	update_selected(widgets->input_combo, NULL);
 }
 
 void select_file(GtkWindow *widget, gpointer data) {
@@ -34,17 +51,17 @@ void select_file(GtkWindow *widget, gpointer data) {
 		char * path;
 		char * title;
 	};
-	struct data * passed = (struct data *) data;
+	struct data * in_data = (struct data *) data;
 	
-	GtkWindow *parent = GTK_WINDOW(passed->window);
-	GtkFileChooserNative *native = gtk_file_chooser_native_new(passed->title, parent, GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
+	GtkWindow *parent = GTK_WINDOW(in_data->window);
+	GtkFileChooserNative *native = gtk_file_chooser_native_new(in_data->title, parent, GTK_FILE_CHOOSER_ACTION_OPEN, "Open", "Cancel");
 	gint res = gtk_native_dialog_run(GTK_NATIVE_DIALOG(native));
 	
 	if (res == GTK_RESPONSE_ACCEPT) {
 		GtkFileChooser *chooser = GTK_FILE_CHOOSER(native);
-		passed->path = gtk_file_chooser_get_filename(chooser);
+		in_data->path = gtk_file_chooser_get_filename(chooser);
 		
-		gtk_entry_set_text(GTK_ENTRY(passed->path_entry), gtk_file_chooser_get_filename(chooser));
+		gtk_entry_set_text(GTK_ENTRY(in_data->path_entry), gtk_file_chooser_get_filename(chooser));
 	}
 }
 
@@ -81,12 +98,27 @@ void roms_load_config() {
 	gtk_tree_view_set_model(GTK_TREE_VIEW(roms_treeview), model);
 }
 
-void roms_add_item(const char * system, const char * name, const char * path, int playtime) {
-	//GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(roms_treeview));
+void roms_add_item(char * system, char * name, char * path, int playtime) {
+	cJSON *rom = cJSON_CreateObject();
+	cJSON_AddStringToObject(rom, "name", name);
+	cJSON_AddStringToObject(rom, "path", path);
+	cJSON_AddNumberToObject(rom, "playtime", playtime);
 	
-	g_print("Add entry: %s, %s, %s, %d\n", system, name, path, playtime);
-	
-	//gtk_tree_view_set_model(GTK_TREE_VIEW(roms_treeview), model);
+	cJSON *system_obj = get_array_item_with_kv_pair(config->systems, "system", system, NULL);
+	if (system_obj == NULL) {
+		g_print("System %s not found\n", system);
+		system_obj = cJSON_CreateObject();
+		cJSON_AddStringToObject(system_obj, "system", system);
+		cJSON_AddArrayToObject(system_obj, "roms");
+		
+		cJSON_AddItemToArray(config->systems, system_obj);
+		
+		g_print(cJSON_Print(system_obj));
+		
+		system_obj = get_array_item_with_kv_pair(config->systems, "system", system, NULL);
+	}
+	cJSON *roms = cJSON_GetObjectItemCaseSensitive(system_obj, "roms");
+	cJSON_AddItemToArray(roms, rom);
 	
 	roms_load_config();
 }
@@ -142,6 +174,7 @@ void roms_update_selection(GtkWidget *widget, gpointer data) {
 	GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(roms_treeview));
 	
 	if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+		
 		if (gtk_tree_model_iter_parent(model, &parent, &iter)) {
 			char *parent_name;
 			gtk_tree_model_get(model, &parent, 0, &parent_name, -1);
@@ -150,9 +183,23 @@ void roms_update_selection(GtkWidget *widget, gpointer data) {
 			char *name;
 			gtk_tree_model_get(model, &iter, 0, &name, -1);
 			
-			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", parent_name);
+			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", parent_name, NULL);
+			config_state.selected_rom_system = system;
+			
 			cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
-			config_state.selected_rom = get_array_item_with_kv_pair(roms, "name", name);
+			config_state.selected_rom = get_array_item_with_kv_pair(roms, "name", name, &config_state.selected_rom_index);
+			
+			// Activate buttons
+			gtk_widget_set_sensitive(roms_edit, TRUE);
+			gtk_widget_set_sensitive(roms_remove, TRUE);
+			
+		} else {
+			
+			config_state.selected_rom = NULL;
+			// Deactivate buttons
+			gtk_widget_set_sensitive(roms_edit, FALSE);
+			gtk_widget_set_sensitive(roms_remove, FALSE);
+			
 		}
 	}
 }
@@ -167,29 +214,77 @@ void rom_add_dialog_close(GtkWidget *widget, gint response_id, gpointer data) {
 		char * path;
 		char * title;
 	};
-	struct data * passed = (struct data *)data;
+	struct data * in_data = (struct data *)data;
 	
 	if (response_id == GTK_RESPONSE_ACCEPT) {
-		const char * system = gtk_entry_get_text(GTK_ENTRY(passed->system_entry));
-		const char * name = gtk_entry_get_text(GTK_ENTRY(passed->name_entry));
-		const char * path = gtk_entry_get_text(GTK_ENTRY(passed->path_entry));
-		int playtime = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(passed->playtime_spin));
+		char * system = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->system_entry));
+		char * name = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->name_entry));
+		char * path = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->path_entry));
+		int playtime = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(in_data->playtime_spin));
 		
 		roms_add_item(system, name, path, playtime);
 	}
 	
-	gtk_widget_destroy(passed->window);
-	free(passed);
+	gtk_widget_destroy(in_data->window);
+	free(in_data);
 }
 
-void rom_add_dialog(gpointer data) {
-	GtkWindow *parent = (GtkWindow *)data;
+void rom_edit_dialog_close(GtkWidget *widget, gint response_id, gpointer data) {
+	struct data {
+		GtkWidget *window;
+		GtkWidget *system_entry;
+		GtkWidget *name_entry;
+		GtkWidget *path_entry;
+		GtkWidget *playtime_spin;
+		char * path;
+		char * title;
+	};
+	struct data * in_data = (struct data *)data;
+	
+	if (response_id == GTK_RESPONSE_ACCEPT) {
+		char * system = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->system_entry));
+		char * name = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->name_entry));
+		char * path = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->path_entry));
+		int playtime = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(in_data->playtime_spin));
+		
+		cJSON *selected_system_name_obj = cJSON_GetObjectItemCaseSensitive(config_state.selected_rom_system, "system");
+		char *selected_system_name = cJSON_GetStringValue(selected_system_name_obj);
+		
+		if (strcmp (system, selected_system_name) != 0) {
+			// Delete this thing, add to another system
+			cJSON *roms = cJSON_GetObjectItemCaseSensitive(config_state.selected_rom_system, "roms");
+			cJSON_DeleteItemFromArray(roms, config_state.selected_rom_index);
+			roms_add_item(system, name, path, playtime);
+		} else {
+			// Just set the other values
+			cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "name"), name);
+			cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "path"), path);
+			cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "playtime"), playtime);
+			
+			roms_load_config();
+		}
+		//cJSON_SetValueString(config_state.selected_rom, 
+	}
+	gtk_widget_destroy(in_data->window);
+	free(in_data);
+}
+
+void create_rom_dialog(int type) {
 	
 	GtkWidget *dialog, *content_area;
 	GtkDialogFlags flags;
 	
 	flags = GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT;
-	dialog = gtk_dialog_new_with_buttons("New ROM", NULL, flags, "OK", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+	if (type == DIALOG_TYPE_ADD) {
+		dialog = gtk_dialog_new_with_buttons("New ROM", NULL, flags, "OK", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+	} else {
+		if (config_state.selected_rom == NULL) {
+			g_print("No ROM selected\n");
+			return;
+		} else {
+			dialog = gtk_dialog_new_with_buttons("Edit ROM", NULL, flags, "OK", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+		}
+	}
 	content_area = gtk_dialog_get_content_area( GTK_DIALOG(dialog));
 	gtk_box_set_spacing(GTK_BOX(content_area), 20);
 	
@@ -221,7 +316,6 @@ void rom_add_dialog(gpointer data) {
 	GtkWidget *playtime_spin = gtk_spin_button_new_with_range(0, INT_MAX, 1.0);	
 	gtk_spin_button_set_snap_to_ticks(GTK_SPIN_BUTTON(playtime_spin), TRUE);
 	
-	
 	gtk_grid_attach(GTK_GRID(grid), playtime_label, 0, 3, 1, 1);
 	gtk_grid_attach(GTK_GRID(grid), playtime_spin, 1, 3, 1, 1);
 	
@@ -236,18 +330,57 @@ void rom_add_dialog(gpointer data) {
 		char * path;
 		char * title;
 	};
-	struct data * passed = (struct data *) malloc(sizeof(struct data));
-	passed->window = dialog;
-	passed->system_entry = system_entry;
-	passed->name_entry = name_entry;
-	passed->path_entry = path_entry;
-	passed->playtime_spin = playtime_spin;
-	passed->path = NULL;
-	passed->title = "Select ROM file";
+	struct data * out_data = (struct data *) malloc(sizeof(struct data));
+	out_data->window = dialog;
+	out_data->system_entry = system_entry;
+	out_data->name_entry = name_entry;
+	out_data->path_entry = path_entry;
+	out_data->playtime_spin = playtime_spin;
+	out_data->path = NULL;
+	out_data->title = "Select ROM file";
 	
-	g_signal_connect(browse, "clicked", G_CALLBACK(select_file), passed);
+	g_signal_connect(browse, "clicked", G_CALLBACK(select_file), out_data);
 	
-	g_signal_connect(dialog, "response", G_CALLBACK (rom_add_dialog_close), passed);
+	if (type == DIALOG_TYPE_ADD) {
+		g_signal_connect(dialog, "response", G_CALLBACK (rom_add_dialog_close), out_data);
+	} else {
+		gtk_entry_set_text(GTK_ENTRY(system_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom_system, "system")));
+		gtk_entry_set_text(GTK_ENTRY(name_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "name")));
+		gtk_entry_set_text(GTK_ENTRY(path_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "path")));
+		gtk_spin_button_set_value(GTK_SPIN_BUTTON(playtime_spin), cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "playtime")));
+		g_signal_connect(dialog, "response", G_CALLBACK (rom_edit_dialog_close), out_data);
+	}
+	gtk_widget_show_all(dialog);
+}
+
+void rom_dialog_add(GtkWidget *widget, gpointer data) {
+	create_rom_dialog(DIALOG_TYPE_ADD);
+}
+
+void rom_dialog_edit(GtkWidget *widget, gpointer data) {
+	create_rom_dialog(DIALOG_TYPE_EDIT);
+}
+
+void rom_remove(GtkWidget *widget, gint response_id, gpointer data) {
+	if (response_id == GTK_RESPONSE_YES) {
+		cJSON *roms = cJSON_GetObjectItemCaseSensitive(config_state.selected_rom_system, "roms");
+		cJSON_DeleteItemFromArray(roms, config_state.selected_rom_index);
+		
+		roms_load_config();
+	}
+	gtk_widget_destroy(widget);
+}
+
+void rom_dialog_remove(GtkWidget *widget, gpointer data) {
+	
+	cJSON *name_obj = cJSON_GetObjectItemCaseSensitive(config_state.selected_rom, "name");
+	char * name = cJSON_GetStringValue(name_obj);
+	
+	GtkDialogFlags flags = GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL;
+	GtkWidget *dialog = gtk_message_dialog_new(NULL, flags, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO, "Are you sure you want to remove %s? Any data recorded for this ROM will be lost.", name);
+	gtk_window_set_title(GTK_WINDOW(dialog), "Remove ROM");
+	g_signal_connect(dialog, "response", G_CALLBACK(rom_remove), NULL);
+	
 	gtk_widget_show_all(dialog);
 }
 
@@ -321,10 +454,12 @@ void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	
 	toggle_sensitive(widgets->button, widgets->play);
 	toggle_sensitive(widgets->config_button, widgets->config_label);
+	toggle_sensitive(widgets->program_combo, widgets->program_name);
+	toggle_sensitive(widgets->input_combo, widgets->input_name);
 	
 	/* Create Window */
 	GtkDialogFlags flags = GTK_DIALOG_DESTROY_WITH_PARENT;
-	GtkWidget *config_dialog = gtk_dialog_new_with_buttons("Configuration", NULL, flags, "Save", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+	GtkWidget *config_dialog = gtk_dialog_new_with_buttons("Configuration", NULL, flags, "Close", GTK_RESPONSE_NONE, NULL);
 	GtkWidget *config_content_area = gtk_dialog_get_content_area(GTK_DIALOG(config_dialog));
 	
 	//gtk_window_set_title(GTK_WINDOW(window), "Configuration");
@@ -364,16 +499,16 @@ void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	vbox_emulators = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	
 	/* Create roms buttons */
-	GtkWidget *roms_new, *roms_remove, *roms_edit;
 	
 	roms_new = gtk_button_new_with_label ("New");
 	roms_edit = gtk_button_new_with_label ("Edit");
 	roms_remove = gtk_button_new_with_label ("Remove");
 	
-	g_signal_connect (roms_new, "clicked", G_CALLBACK (rom_add_dialog), config_content_area);
+	g_signal_connect (roms_new, "clicked", G_CALLBACK (rom_dialog_add), NULL);
+	g_signal_connect (roms_edit, "clicked", G_CALLBACK (rom_dialog_edit), NULL);
+	g_signal_connect (roms_remove, "clicked", G_CALLBACK (rom_dialog_remove), NULL);
 	
 	/* Create emulators buttons */
-	GtkWidget *emulators_new, *emulators_remove, *emulators_edit;
 	
 	emulators_new = gtk_button_new_with_label ("New");
 	emulators_edit = gtk_button_new_with_label ("Edit");
@@ -409,7 +544,6 @@ void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	
 	gtk_box_pack_start(GTK_BOX(config_content_area), hbox_roms, TRUE, TRUE, 10);
 	gtk_box_pack_start(GTK_BOX(config_content_area), hbox_emulators, TRUE, TRUE, 10);
-	
 
 	g_signal_connect(roms_selection, "changed", G_CALLBACK(roms_update_selection), NULL);
 	//g_signal_connect(emulators_selection, "changed", G_CALLBACK(emulators_update_selection), NULL);
