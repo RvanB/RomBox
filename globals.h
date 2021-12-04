@@ -25,7 +25,7 @@ struct widgets {
 struct configuration {
 	double scale;
 	cJSON *systems;
-	cJSON *emulators;
+	//cJSON *emulators;
 };
 
 GLOBAL_VAR(struct widgets *, widgets, NULL);

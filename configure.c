@@ -18,9 +18,15 @@ typedef struct ConfigState {
 	cJSON *selected_rom;
 	int selected_rom_index;
 	cJSON *selected_rom_system;
+	int selected_rom_system_index;
+
 	cJSON *selected_emulator;
+	int selected_emulator_index;
+	cJSON *selected_emulator_system;
+	int selected_emulator_system_index;
 } ConfigState;
-static ConfigState config_state = { .selected_rom = NULL, .selected_rom_index = -1, .selected_emulator = NULL };
+
+static ConfigState config_state = { .selected_rom = NULL, .selected_rom_index = -1, .selected_rom_system_index = -1, .selected_emulator = NULL, .selected_emulator_index = -1, .selected_emulator_system_index = -1};
 
 void close_configuration(GtkWidget *widget, gpointer data) {
 	toggle_sensitive(widgets->button, widgets->play);
@@ -183,7 +189,7 @@ void roms_update_selection(GtkWidget *widget, gpointer data) {
 			char *name;
 			gtk_tree_model_get(model, &iter, 0, &name, -1);
 			
-			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", parent_name, NULL);
+			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", parent_name, &config_state.selected_rom_system_index);
 			config_state.selected_rom_system = system;
 			
 			cJSON *roms = cJSON_GetObjectItemCaseSensitive(system, "roms");
@@ -254,6 +260,7 @@ void rom_edit_dialog_close(GtkWidget *widget, gint response_id, gpointer data) {
 			// Delete this thing, add to another system
 			cJSON *roms = cJSON_GetObjectItemCaseSensitive(config_state.selected_rom_system, "roms");
 			cJSON_DeleteItemFromArray(roms, config_state.selected_rom_index);
+			
 			roms_add_item(system, name, path, playtime);
 		} else {
 			// Just set the other values
@@ -384,8 +391,59 @@ void rom_dialog_remove(GtkWidget *widget, gpointer data) {
 	gtk_widget_show_all(dialog);
 }
 
-void emulators_add_item(GtkWidget *widget, gpointer data) {
+void emulators_load_config() {
+	GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(emulators_treeview));
 	
+	gtk_tree_store_clear(GTK_TREE_STORE(model));
+
+	cJSON *system = NULL;
+	cJSON_ArrayForEach(system, config->systems) {
+		gtk_tree_store_append(GTK_TREE_STORE(model), &emulators_toplevel, NULL);
+		cJSON *system_name_obj = cJSON_GetObjectItemCaseSensitive(system, "system");
+		char * system_name = cJSON_GetStringValue(system_name_obj);
+		gtk_tree_store_set(GTK_TREE_STORE(model), &emulators_toplevel, 0, system_name, -1);
+
+		cJSON *emulators = cJSON_GetObjectItemCaseSensitive(system, "emulators");
+		cJSON *emulator = NULL;
+		
+		cJSON_ArrayForEach(emulator, emulators) {
+			char * name = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(emulator, "name"));
+			char * path = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(emulator, "path"));
+			char * flags = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(emulator, "flags"));
+
+			gtk_tree_store_append(GTK_TREE_STORE(model), &emulators_child, &emulators_toplevel);
+			gtk_tree_store_set(GTK_TREE_STORE(model), &emulators_child,  0, name, 1, path, 2, flags, -1);
+		}
+
+	}
+
+	gtk_tree_view_set_model(GTK_TREE_VIEW(emulators_treeview), model);
+}
+
+void emulators_add_item(char * system, char * name, char * path, char * flags) {
+	
+	cJSON *emulator = cJSON_CreateObject();
+	cJSON_AddStringToObject(emulator, "name", name);
+	cJSON_AddStringToObject(emulator, "path", path);
+	cJSON_AddStringToObject(emulator, "flags", flags);
+	
+	cJSON *system_obj = get_array_item_with_kv_pair(config->systems, "system", system, NULL);
+	if (system_obj == NULL) {
+		g_print("System %s not found\n", system);
+		system_obj = cJSON_CreateObject();
+		cJSON_AddStringToObject(system_obj, "system", system);
+		cJSON_AddArrayToObject(system_obj, "emulators");
+		
+		cJSON_AddItemToArray(config->systems, system_obj);
+		
+		g_print(cJSON_Print(system_obj));
+		
+		system_obj = get_array_item_with_kv_pair(config->systems, "system", system, NULL);
+	}
+	cJSON *emulators = cJSON_GetObjectItemCaseSensitive(system_obj, "emulators");
+	cJSON_AddItemToArray(emulators, emulator);
+	
+	emulators_load_config();
 }
 
 GtkWidget *emulators_init_mv(void) {
@@ -423,14 +481,6 @@ GtkWidget *emulators_init_mv(void) {
 	/* Create Model */
 	GtkTreeStore *treestore;
 	treestore = gtk_tree_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
-	gtk_tree_store_append(treestore, &roms_toplevel, NULL);
-	gtk_tree_store_set(treestore, &roms_toplevel, 0, "NES", -1);
-
-	gtk_tree_store_append(treestore, &roms_child, &roms_toplevel);
-	gtk_tree_store_set(treestore, &roms_child, 0, "NESTOPIA", 1, "Something", 2, "7", -1);
-  
-	gtk_tree_store_append(treestore, &roms_child, &roms_toplevel);
-	gtk_tree_store_set(treestore, &roms_child, 0, "MESEN", 1, "SOMETHING ELSE", 2, "8", -1);
 	
 	GtkTreeModel *model = GTK_TREE_MODEL(treestore);
 	
@@ -439,16 +489,222 @@ GtkWidget *emulators_init_mv(void) {
 }
 
 void emulators_update_selection(GtkWidget *widget, gpointer data) {
+	GtkTreeIter iter;
+	GtkTreeIter temp;
+	GtkTreeIter parent;
+	GtkTreeModel *model;
+	GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(emulators_treeview));
 	
+	if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+		
+		if (gtk_tree_model_iter_parent(model, &parent, &iter)) {
+			char *parent_name;
+			gtk_tree_model_get(model, &parent, 0, &parent_name, -1);
+			
+			/* has a parent */
+			char *name;
+			gtk_tree_model_get(model, &iter, 0, &name, -1);
+			
+			cJSON *system = get_array_item_with_kv_pair(config->systems, "system", parent_name, &config_state.selected_emulator_system_index);
+			config_state.selected_emulator_system = system;
+			
+			cJSON *emulators = cJSON_GetObjectItemCaseSensitive(system, "emulators");
+			config_state.selected_emulator = get_array_item_with_kv_pair(emulators, "name", name, &config_state.selected_emulator_index);
+			
+			// Activate buttons
+			gtk_widget_set_sensitive(emulators_edit, TRUE);
+			gtk_widget_set_sensitive(emulators_remove, TRUE);
+			
+		} else {
+			
+			config_state.selected_emulator = NULL;
+			// Deactivate buttons
+			gtk_widget_set_sensitive(emulators_edit, FALSE);
+			gtk_widget_set_sensitive(emulators_remove, FALSE);
+			
+		}
+	}
 }
 
 void emulator_add_dialog_close(GtkWidget *widget, gint response_id, gpointer data) {
+	struct data {
+		GtkWidget *window;
+		GtkWidget *system_entry;
+		GtkWidget *name_entry;
+		GtkWidget *path_entry;
+		GtkWidget *flags_entry;
+		char * path;
+		char * title;
+	};
+	struct data * in_data = (struct data *)data;
 	
+	if (response_id == GTK_RESPONSE_ACCEPT) {
+		char * system = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->system_entry));
+		char * name = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->name_entry));
+		char * path = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->path_entry));
+		char * flags = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->flags_entry));
+		
+		emulators_add_item(system, name, path, flags);
+	}
+	
+	gtk_widget_destroy(in_data->window);
+	free(in_data);
 }
 
-void emulator_add_dialog(gpointer data) {
+void emulator_edit_dialog_close(GtkWidget *widget, gint response_id, gpointer data) {
+	struct data {
+		GtkWidget *window;
+		GtkWidget *system_entry;
+		GtkWidget *name_entry;
+		GtkWidget *path_entry;
+		GtkWidget *flags_entry;
+		char * path;
+		char * title;
+	};
+	struct data * in_data = (struct data *)data;
 	
+	if (response_id == GTK_RESPONSE_ACCEPT) {
+		char * system = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->system_entry));
+		char * name = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->name_entry));
+		char * path = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->path_entry));
+		char * flags = (char *)gtk_entry_get_text(GTK_ENTRY(in_data->flags_entry));
+		
+		cJSON *selected_system_name_obj = cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator_system, "system");
+		char *selected_system_name = cJSON_GetStringValue(selected_system_name_obj);
+		
+		if (strcmp (system, selected_system_name) != 0) {
+			// Delete this thing, add to another system
+			cJSON *emulators = cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator_system, "emulators");
+			cJSON_DeleteItemFromArray(emulators, config_state.selected_emulator_index);
+			
+			emulators_add_item(system, name, path, flags);
+		} else {
+			// Just set the other values
+			cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "name"), name);
+			cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "path"), path);
+			cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "flags"), flags);
+			
+			emulators_load_config();
+		}
+		//cJSON_SetValueString(config_state.selected_rom, 
+	}
+	gtk_widget_destroy(in_data->window);
+	free(in_data);
 }
+
+void create_emulator_dialog(int type) {
+	GtkWidget *dialog, *content_area;
+	GtkDialogFlags flags;
+	
+	flags = GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT;
+	if (type == DIALOG_TYPE_ADD) {
+		dialog = gtk_dialog_new_with_buttons("New Emulator", NULL, flags, "OK", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+	} else {
+		if (config_state.selected_emulator == NULL) {
+			g_print("No ROM selected\n");
+			return;
+		} else {
+			dialog = gtk_dialog_new_with_buttons("Edit ROM", NULL, flags, "OK", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+		}
+	}
+	content_area = gtk_dialog_get_content_area( GTK_DIALOG(dialog));
+	gtk_box_set_spacing(GTK_BOX(content_area), 20);
+	
+	GtkWidget *grid = gtk_grid_new();
+	gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
+	gtk_grid_set_column_spacing(GTK_GRID(grid), 5);
+	
+	GtkWidget *system_label = gtk_label_new("System:");
+	GtkWidget *system_entry = gtk_entry_new();
+	
+	gtk_grid_attach(GTK_GRID(grid), system_label, 0, 0, 1, 1);
+	gtk_grid_attach(GTK_GRID(grid), system_entry, 1, 0, 1, 1);
+	
+	GtkWidget *name_label = gtk_label_new("Name:");
+	GtkWidget *name_entry = gtk_entry_new();
+	
+	gtk_grid_attach(GTK_GRID(grid), name_label, 0, 1, 1, 1);
+	gtk_grid_attach(GTK_GRID(grid), name_entry, 1, 1, 1, 1);
+	
+	GtkWidget *path_label = gtk_label_new("Path:");
+	GtkWidget *path_entry = gtk_entry_new();
+	GtkWidget *browse = gtk_button_new_with_label("Browse");
+	
+	gtk_grid_attach(GTK_GRID(grid), path_label, 0, 2, 1, 1);
+	gtk_grid_attach(GTK_GRID(grid), path_entry, 1, 2, 1, 1);
+	gtk_grid_attach(GTK_GRID(grid), browse, 2, 2, 1, 1);
+	
+	GtkWidget *flags_label = gtk_label_new("Flags:");
+	GtkWidget *flags_entry = gtk_entry_new();
+	
+	gtk_grid_attach(GTK_GRID(grid), flags_label, 0, 3, 1, 1);
+	gtk_grid_attach(GTK_GRID(grid), flags_entry, 1, 3, 1, 1);
+	
+	gtk_container_add(GTK_CONTAINER(content_area), grid);
+	
+	struct data {
+		GtkWidget *window;
+		GtkWidget *system_entry;
+		GtkWidget *name_entry;
+		GtkWidget *path_entry;
+		GtkWidget *flags_entry;
+		char * path;
+		char * title;
+	};
+	struct data * out_data = (struct data *) malloc(sizeof(struct data));
+	out_data->window = dialog;
+	out_data->system_entry = system_entry;
+	out_data->name_entry = name_entry;
+	out_data->path_entry = path_entry;
+	out_data->flags_entry = flags_entry;
+	out_data->path = NULL;
+	out_data->title = "Select Emulator file";
+	
+	g_signal_connect(browse, "clicked", G_CALLBACK(select_file), out_data);
+	
+	if (type == DIALOG_TYPE_ADD) {
+		g_signal_connect(dialog, "response", G_CALLBACK (emulator_add_dialog_close), out_data);
+	} else {
+		gtk_entry_set_text(GTK_ENTRY(system_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator_system, "system")));
+		gtk_entry_set_text(GTK_ENTRY(name_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "name")));
+		gtk_entry_set_text(GTK_ENTRY(path_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "path")));
+		gtk_entry_set_text(GTK_ENTRY(flags_entry), cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "flags")));
+		g_signal_connect(dialog, "response", G_CALLBACK (emulator_edit_dialog_close), out_data);
+	}
+	gtk_widget_show_all(dialog);
+}
+
+void emulator_dialog_add(GtkWidget *widget, gpointer data) {
+	create_emulator_dialog(DIALOG_TYPE_ADD);
+}
+
+void emulator_dialog_edit(GtkWidget *widget, gpointer data) {
+	create_emulator_dialog(DIALOG_TYPE_EDIT);
+}
+
+void emulator_remove(GtkWidget *widget, gint response_id, gpointer data) {
+	
+	if (response_id == GTK_RESPONSE_YES) {
+		cJSON *emulators = cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator_system, "emulators");
+		cJSON_DeleteItemFromArray(emulators, config_state.selected_emulator_index);
+			
+		roms_load_config();
+	}
+	gtk_widget_destroy(widget);
+}
+
+void emulator_dialog_remove(GtkWidget *widget, gpointer data) {
+	cJSON *name_obj = cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator, "name");
+	char * name = cJSON_GetStringValue(name_obj);
+	
+	GtkDialogFlags flags = GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL;
+	GtkWidget *dialog = gtk_message_dialog_new(NULL, flags, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO, "Are you sure you want to remove %s? Any data recorded for this emulator will be lost.", name);
+	gtk_window_set_title(GTK_WINDOW(dialog), "Remove Emulator");
+	g_signal_connect(dialog, "response", G_CALLBACK(emulator_remove), NULL);
+	
+	gtk_widget_show_all(dialog);
+}
+
 
 void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	
@@ -463,7 +719,7 @@ void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	GtkWidget *config_content_area = gtk_dialog_get_content_area(GTK_DIALOG(config_dialog));
 	
 	//gtk_window_set_title(GTK_WINDOW(window), "Configuration");
-	gtk_window_set_default_size(GTK_WINDOW(config_dialog), 640, 480);
+	gtk_window_set_default_size(GTK_WINDOW(config_dialog), 800, 600);
 	
 	/* Create roms hbox */
 	GtkWidget *hbox_roms;
@@ -513,8 +769,10 @@ void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	emulators_new = gtk_button_new_with_label ("New");
 	emulators_edit = gtk_button_new_with_label ("Edit");
 	emulators_remove = gtk_button_new_with_label ("Remove");
-	
-	//g_signal_connect (roms_new, "clicked", G_CALLBACK (rom_add_dialog), config_content_area);
+
+	g_signal_connect (emulators_new, "clicked", G_CALLBACK (emulator_dialog_add), NULL);
+	g_signal_connect (emulators_edit, "clicked", G_CALLBACK (emulator_dialog_edit), NULL);
+	g_signal_connect (emulators_remove, "clicked", G_CALLBACK (emulator_dialog_remove), NULL);
 	
 	/* Add stuff to other stuff */
 	
@@ -546,11 +804,12 @@ void configure(GtkWidget *widget, GdkEvent *event, gpointer data) {
 	gtk_box_pack_start(GTK_BOX(config_content_area), hbox_emulators, TRUE, TRUE, 10);
 
 	g_signal_connect(roms_selection, "changed", G_CALLBACK(roms_update_selection), NULL);
-	//g_signal_connect(emulators_selection, "changed", G_CALLBACK(emulators_update_selection), NULL);
+	g_signal_connect(emulators_selection, "changed", G_CALLBACK(emulators_update_selection), NULL);
 	  
 	g_signal_connect(config_dialog, "response", G_CALLBACK (close_configuration), config_dialog);
 
 	gtk_widget_show_all(config_dialog);
 	
 	roms_load_config();
+	emulators_load_config();
 }

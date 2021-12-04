@@ -154,14 +154,15 @@ void * thread_body(void *arg) {
 
 	gtk_layout_move(GTK_LAYOUT(widgets->layout), widgets->play, 88 * config->scale, 56 * config->scale);
 
-	// Start the child process.
-	if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-		fprintf(stderr, "Couldn't create process");
-	}
 	free(info);
 	
-	// Wait until child process exits.
-	WaitForSingleObject( pi.hProcess, INFINITE );
+	// Start the child process.
+	if(!CreateProcess(NULL, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+		g_printerr("Couldn't create process");
+	} else {
+		// Wait until child process exits.
+		WaitForSingleObject( pi.hProcess, INFINITE );
+	}
 
 	state.playing = false;
 	
@@ -285,7 +286,7 @@ int load_data() {
 		
 		config->systems = cJSON_GetObjectItemCaseSensitive(json, "systems");
 		
-		config->emulators = cJSON_GetObjectItemCaseSensitive(json, "emulators");
+		//config->emulators = cJSON_GetObjectItemCaseSensitive(json, "emulators");
 	}
 	free(path);
 }
@@ -307,19 +308,23 @@ char * display_time(int minutes) {
 
 void update_program_combo(GtkWidget *program_combo) {
 	
-	cJSON *emulator = NULL;
+	cJSON *system = NULL;
 	
 	int emulator_count = 0;
 	
 	gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(program_combo));
 	
-	cJSON_ArrayForEach(emulator, config->emulators) {
-		cJSON *nameObj = cJSON_GetObjectItemCaseSensitive(emulator, "name");
-		char * name = cJSON_GetStringValue(nameObj);
-		
-		gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
-		
-		emulator_count ++;
+	cJSON_ArrayForEach(system, config->systems) {
+		cJSON *emulator = NULL;
+		cJSON *emulators = cJSON_GetObjectItemCaseSensitive(system, "emulators");
+		cJSON_ArrayForEach(emulator, emulators) {
+			cJSON *nameObj = cJSON_GetObjectItemCaseSensitive(emulator, "name");
+			char * name = cJSON_GetStringValue(nameObj);
+			
+			gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(program_combo), NULL, name);
+			
+			emulator_count ++;
+		}
 	}
 	if (emulator_count > 0) {
 		gtk_combo_box_set_active(GTK_COMBO_BOX(program_combo), 0);
@@ -360,10 +365,22 @@ void update_selected(GtkWidget *combo, gpointer data) {
 		
 		/* Change options in input combo */
 		
-		cJSON *emulator = cJSON_GetArrayItem(config->emulators, index);
-		state.selected_emulator = emulator;
+		cJSON *system = NULL;
+		cJSON_ArrayForEach(system, config->systems) {
+			cJSON *emulators = cJSON_GetObjectItemCaseSensitive(system, "emulators");
+			
+			cJSON *emulator = get_array_item_with_kv_pair(emulators, "name", gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo)), NULL);
+			
+			if (emulator != NULL) {
+				state.selected_emulator = emulator;
+				break;
+			}
+		}
 		
-		cJSON *system_name_obj = cJSON_GetObjectItemCaseSensitive(emulator, "system");
+		//cJSON *emulator = cJSON_GetArrayItem(config->emulators, index);
+		//state.selected_emulator = emulator;
+		
+		cJSON *system_name_obj = cJSON_GetObjectItemCaseSensitive(system, "system");
 		char * system_name = cJSON_GetStringValue(system_name_obj);
 		
 		if (strcmp(system_name, state.system_name) != 0) {
@@ -384,7 +401,7 @@ void update_selected(GtkWidget *combo, gpointer data) {
 				char * name = cJSON_GetStringValue(nameObj);
 				gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(widgets->input_combo), NULL, name);
 				
-				rom_count ++;
+				rom_count++;
 			}
 			
 			gtk_label_set_text(GTK_LABEL(widgets->playtime), time);
