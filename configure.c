@@ -688,7 +688,7 @@ void emulator_remove(GtkWidget *widget, gint response_id, gpointer data) {
 		cJSON *emulators = cJSON_GetObjectItemCaseSensitive(config_state.selected_emulator_system, "emulators");
 		cJSON_DeleteItemFromArray(emulators, config_state.selected_emulator_index);
 			
-		roms_load_config();
+		emulators_load_config();
 	}
 	gtk_widget_destroy(widget);
 }

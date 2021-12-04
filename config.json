@@ -1,38 +1,68 @@
 {
 	"scale":	3,
 	"systems":	[{
-			"name":	"NES",
+			"system":	"NES",
 			"roms":	[{
-					"name":	"TETRIS",
-					"path":	"C:/Users/rvan/Desktop/Tetris.nes",
-					"playtime":	182
-				}, {
 					"name":	"TETRIS GYM",
-					"path":	"C:/Users/rvan/Desktop/tetrisgym_v4 (patched).nes",
-					"playtime":	82
+					"path":	"C:/Users/rvan/Desktop/roms/tetrisgym_v4 (patched).nes",
+					"playtime":	0
+				}, {
+					"name":	"MARBLE MADNESS",
+					"path":	"C:/Users/rvan/Desktop/roms/Marble Madness (USA).nes",
+					"playtime":	35
+				}, {
+					"name":	"FROM BELOW",
+					"path":	"C:/Users/rvan/Desktop/roms/From Below.nes",
+					"playtime":	20
+				}, {
+					"name":	"EXCITEBIKE",
+					"path":	"C:/Users/rvan/Desktop/roms/Excitebike (Japan, USA).nes",
+					"playtime":	3
+				}, {
+					"name":	"BLADES OF STEEL",
+					"path":	"C:/Users/rvan/Desktop/roms/Blades of Steel (USA).nes",
+					"playtime":	22
+				}, {
+					"name":	"ICE HOCKEY",
+					"path":	"C:\\Users\\rvan\\Desktop\\roms\\Ice Hockey (USA).nes",
+					"playtime":	0
+				}, {
+					"name":	"TETRIS",
+					"path":	"C:/Users/rvan/Desktop/roms/Tetris (World) (Rev A).gb",
+					"playtime":	32
+				}, {
+					"name":	"MEGA MAN",
+					"path":	"C:\\Users\\rvan\\Desktop\\roms\\Mega Man (USA).nes",
+					"playtime":	158
+				}, {
+					"name":	"SPIRITUAL WARFARE",
+					"path":	"C:\\Users\\rvan\\Desktop\\roms\\Spiritual Warfare (USA) (v6.1) (Unl).nes",
+					"playtime":	1
+				}, {
+					"name":	"LEGEND OF ZELDA",
+					"path":	"C:\\Users\\rvan\\Desktop\\roms\\Legend of Zelda, The (USA) (Rev 1).nes",
+					"playtime":	226
+				}],
+			"emulators":	[{
+					"name":	"NESTOPIA",
+					"path":	"C:/Users/rvan/Desktop/Nestopia140bin/nestopia.exe",
+					"flags":	""
+				}, {
+					"name":	"MESEN",
+					"path":	"F:/Mesen.0.9.9/Mesen.exe",
+					"flags":	"/fullscreen"
 				}]
 		}, {
-			"name":	"Gameboy Advance",
+			"system":	"Gameboy Advance",
 			"roms":	[{
 					"name":	"TETRIS",
-					"path":	"C:/Users/rvan/Desktop/Tetris (World) (Rev A).gb",
-					"playtime":	32
+					"path":	"C:/Users/rvan/Desktop/roms/Tetris (USA).nes",
+					"playtime":	28
+				}],
+			"emulators":	[{
+					"name":	"VIRTUAL BOY ADVANCE",
+					"path":	"C:/Users/rvan/Desktop/VisualBoyAdvance.exe",
+					"flags":	""
 				}]
-		}],
-	"emulators":	[{
-			"name":	"NESTOPIA",
-			"system":	0,
-			"path":	"C:/Users/rvan/Desktop/Nestopia140bin/nestopia.exe",
-			"flags":	""
-		}, {
-			"name":	"MESEN",
-			"system":	0,
-			"path":	"F:/Mesen.0.9.9/Mesen.exe",
-			"flags":	""
-		}, {
-			"name":	"VIRTUAL BOY ADVANCE",
-			"system":	1,
-			"path":	"C:/Users/rvan/Desktop/VisualBoyAdvance.exe",
-			"flags":	""
 		}]
 }
